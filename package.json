@@ -1,0 +1,11 @@
+{
+  "name": "jarvis-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "JARVIS Mobile — PWA-помощник инженера. Без сборки и без внешних зависимостей.",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:e2e": "python3 tests/e2e/test_app.py"
+  }
+}

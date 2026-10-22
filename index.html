@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>JARVIS Mobile</title>
+  <meta name="description" content="Персональный помощник инженера. Этап 1: демонстрационный режим.">
+  <meta name="theme-color" content="#0F2436" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#E9EEF2" media="(prefers-color-scheme: light)">
+  <meta name="color-scheme" content="dark light">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <svg class="core" viewBox="0 0 48 48" aria-hidden="true">
+        <circle cx="24" cy="24" r="20" class="core-track"/>
+        <circle cx="24" cy="24" r="20" class="core-arc"/>
+        <circle cx="24" cy="24" r="7" class="core-dot"/>
+      </svg>
+      <div class="brand">
+        <h1>JARVIS</h1>
+        <p class="mode" id="mode-line" data-mode="demo">Демо-режим: ИИ не подключён</p>
+      </div>
+    </header>
+
+    <div class="banner" id="storage-banner" role="alert" hidden></div>
+
+    <main id="main">
+      <!-- Диалог -->
+      <section class="screen screen-dialog" id="screen-dialog" data-screen="dialog" aria-labelledby="t-dialog">
+        <h2 class="visually-hidden" id="t-dialog">Диалог</h2>
+        <ol class="messages" id="messages" aria-live="polite"></ol>
+        <div class="empty" id="messages-empty" hidden>
+          <p class="empty-title">История пуста</p>
+          <p>Напишите сообщение или «помощь», чтобы узнать, что уже работает. Для голоса нажмите микрофон на клавиатуре телефона.</p>
+        </div>
+        <form class="composer" id="composer" novalidate>
+          <label for="input" class="visually-hidden">Сообщение</label>
+          <textarea id="input" name="message" rows="1" maxlength="4000" enterkeyhint="send"
+            autocomplete="off" placeholder="Сообщение или заметка"></textarea>
+          <button type="submit" class="send" id="send">Отправить</button>
+          <p class="composer-error" id="composer-error" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <!-- Реестр -->
+      <section class="screen" id="screen-registry" data-screen="registry" aria-labelledby="t-registry" hidden>
+        <h2 id="t-registry">Реестр замечаний</h2>
+        <p class="note">Разбор заметок в записи реестра появится на этапе 2. До этого реестр пуст: приложение не придумывает записи.</p>
+        <p class="count" id="records-count">Записей: 0</p>
+        <div class="table-wrap" tabindex="0" aria-label="Таблица реестра, прокручивается вбок">
+          <table class="registry">
+            <thead><tr id="registry-head"></tr></thead>
+            <tbody id="registry-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Настройки -->
+      <section class="screen" id="screen-settings" data-screen="settings" aria-labelledby="t-settings" hidden>
+        <h2 id="t-settings">Настройки</h2>
+
+        <div class="group">
+          <h3>Подключение ИИ</h3>
+          <p class="value">Не подключено</p>
+          <p class="note">ИИ будет подключён на этапе 4 через защищённый сервер-посредник. Ключи в приложение не вводятся и в нём не хранятся.</p>
+        </div>
+
+        <div class="group">
+          <h3>Данные на этом телефоне</h3>
+          <dl class="facts">
+            <div><dt>Сообщений</dt><dd id="count-messages">0</dd></div>
+            <div><dt>Записей реестра</dt><dd id="count-records">0</dd></div>
+            <div><dt>Где хранятся</dt><dd id="storage-kind">—</dd></div>
+          </dl>
+          <p class="note">Данные никуда не отправляются. Они хранятся только в браузере этого телефона.</p>
+          <button type="button" class="danger" id="delete-history">Удалить всю историю</button>
+        </div>
+
+        <div class="group">
+          <h3>О приложении</h3>
+          <dl class="facts">
+            <div><dt>Версия</dt><dd id="app-version">—</dd></div>
+            <div><dt>Этап разработки</dt><dd id="app-stage">—</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <!-- Статус -->
+      <section class="screen" id="screen-status" data-screen="status" aria-labelledby="t-status" hidden>
+        <h2 id="t-status">Статус</h2>
+        <p class="note">Что работает на этом телефоне прямо сейчас.</p>
+        <ul class="features" id="features"></ul>
+      </section>
+    </main>
+
+    <nav class="tabbar" aria-label="Разделы">
+      <button type="button" class="tab" data-target="dialog" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>
+        <span>Диалог</span>
+      </button>
+      <button type="button" class="tab" data-target="registry">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6z M9 8h6 M9 12h6 M9 16h4"/></svg>
+        <span>Реестр</span>
+      </button>
+      <button type="button" class="tab" data-target="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10 M18 7h2 M4 17h4 M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+        <span>Настройки</span>
+      </button>
+      <button type="button" class="tab" data-target="status">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg>
+        <span>Статус</span>
+      </button>
+    </nav>
+  </div>
+
+  <dialog class="confirm" id="confirm-delete" aria-labelledby="confirm-title">
+    <form method="dialog">
+      <h2 id="confirm-title">Удалить всю историю?</h2>
+      <p>Будут удалены все сообщения и записи реестра на этом телефоне. Восстановить их будет нельзя.</p>
+      <div class="confirm-actions">
+        <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
+        <button type="submit" value="delete" class="danger">Удалить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <noscript><p class="banner">Для работы приложения нужен JavaScript. Откройте ссылку в Chrome.</p></noscript>
+</body>
+</html>
