@@ -12,10 +12,11 @@ export const STATE_LABELS = {
   unknown: 'Проверяется',
 };
 
-// env: { storage: 'indexeddb'|'memory', persisted: true|false|null,
+// env: { platform: 'apk'|'web', storage: 'indexeddb'|'memory', persisted: true|false|null,
 //        offlineReady: true|false|null, standalone: bool, online: bool, aiConfigured: bool }
 export function computeFeatures(env) {
   const features = [];
+  const apk = env.platform === 'apk';
 
   features.push({ id: 'ui', name: 'Интерфейс и экраны', state: 'works', note: 'Диалог, Реестр, Настройки, Статус.' });
 
@@ -30,7 +31,12 @@ export function computeFeatures(env) {
 
   features.push(
     env.storage === 'indexeddb'
-      ? { id: 'storage', name: 'Сохранение на устройстве', state: 'works', note: 'История хранится только в этом браузере.' }
+      ? {
+          id: 'storage',
+          name: 'Сохранение на устройстве',
+          state: 'works',
+          note: apk ? 'История хранится во внутренней памяти приложения.' : 'История хранится только в этом браузере.',
+        }
       : {
           id: 'storage',
           name: 'Сохранение на устройстве',
@@ -39,7 +45,12 @@ export function computeFeatures(env) {
         },
   );
 
-  features.push({
+  features.push(apk ? {
+    id: 'persist',
+    name: 'Защита данных от автоочистки',
+    state: 'works',
+    note: 'Данные приложения не очищаются браузером. Они удаляются только при удалении приложения или очистке его данных в настройках Android.',
+  } : {
     id: 'persist',
     name: 'Защита данных от автоочистки',
     state: env.persisted === true ? 'works' : env.persisted === false ? 'off' : 'unknown',
@@ -53,7 +64,12 @@ export function computeFeatures(env) {
 
   features.push({ id: 'delete', name: 'Удаление истории', state: 'works', note: 'Настройки → «Удалить всю историю».' });
 
-  features.push({
+  features.push(apk ? {
+    id: 'offline',
+    name: 'Запуск без интернета',
+    state: 'works',
+    note: 'Все файлы приложения находятся внутри APK.',
+  } : {
     id: 'offline',
     name: 'Запуск без интернета',
     state: env.offlineReady === true ? 'works' : env.offlineReady === false ? 'unavailable' : 'unknown',
@@ -65,7 +81,13 @@ export function computeFeatures(env) {
           : 'Файлы приложения сохраняются при первом открытии.',
   });
 
-  features.push({
+  features.push(apk ? {
+    id: 'install',
+    name: 'Установка на телефон',
+    state: 'works',
+    label: 'APK',
+    note: 'Установлено как приложение Android.',
+  } : {
     id: 'install',
     name: 'Установка на главный экран',
     state: env.standalone ? 'works' : 'off',
@@ -93,7 +115,7 @@ export function computeFeatures(env) {
     id: 'export',
     name: 'Экспорт в CSV',
     state: 'works',
-    note: 'Файл для Excel и LibreOffice. Excel может сам превратить отметки и номера в числа или даты.',
+    note: `${apk ? 'Место сохранения выбирается в окне Android «Сохранить». ' : 'Файл сохраняется в «Загрузки». '}Excel может сам превратить отметки и номера в числа или даты.`,
   });
   features.push({
     id: 'xlsx',

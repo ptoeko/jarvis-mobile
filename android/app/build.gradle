@@ -1,0 +1,78 @@
+// Android-оболочка JARVIS Mobile. Веб-приложение из корня репозитория
+// копируется внутрь APK при каждой сборке, поэтому код интерфейса один.
+plugins {
+    id 'com.android.application'
+}
+
+def webRoot = rootProject.file('..')
+
+// Версия берётся из js/core/config.js, чтобы APK и веб-версия совпадали.
+def webVersion = {
+    def m = (new File(webRoot, 'js/core/config.js').text =~ /APP_VERSION = '(\d+)\.(\d+)\.(\d+)'/)
+    if (!m.find()) throw new GradleException('Не найдена APP_VERSION в js/core/config.js')
+    [name: "${m.group(1)}.${m.group(2)}.${m.group(3)}",
+     code: m.group(1).toInteger() * 10000 + m.group(2).toInteger() * 100 + m.group(3).toInteger()]
+}()
+
+// Подпись: ключ передаётся через переменные окружения (секреты GitHub).
+// Без ключа собирается только отладочная версия.
+def keystorePath = System.getenv('ANDROID_KEYSTORE_FILE')
+def hasReleaseKey = keystorePath != null && new File(keystorePath).exists()
+
+android {
+    namespace 'ru.jarvis.mobile'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'ru.jarvis.mobile'
+        minSdk 24
+        // 34: без принудительного вывода под системные панели (Android 15).
+        targetSdk 34
+        versionCode webVersion.code
+        versionName webVersion.name
+    }
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            release {
+                storeFile file(keystorePath)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (hasReleaseKey) signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs = [layout.buildDirectory.dir('generated/webassets')]
+        }
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+// Копирует файлы веб-приложения в APK. sw.js не нужен: в APK файлы и так
+// лежат на устройстве.
+tasks.register('copyWebAssets', Sync) {
+    from(webRoot) {
+        include 'index.html', 'manifest.webmanifest', 'css/**', 'js/**', 'icons/**'
+    }
+    into layout.buildDirectory.dir('generated/webassets/www')
+}
+tasks.named('preBuild') { dependsOn 'copyWebAssets' }

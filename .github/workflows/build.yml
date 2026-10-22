@@ -1,0 +1,200 @@
+# Сборка JARVIS Mobile: тесты → APK → проверка на эмуляторе Android →
+# выпуск APK (страница Releases) и публикация веб-версии (GitHub Pages).
+name: Сборка и проверка
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-tests:
+    name: Тесты веб-приложения
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # нужен тег v0.1.0-stage1 для теста обновления
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Модульные тесты
+        run: npm test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Установка Chromium, LibreOffice и библиотек для тестов
+        run: |
+          pip install playwright openpyxl
+          python -m playwright install --with-deps chromium
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-calc
+      - name: Сквозные тесты
+        run: |
+          python tests/e2e/test_app.py e2e-out/stage1
+          python tests/e2e/test_stage2.py e2e-out/stage2
+          python tests/e2e/test_apk_mode.py e2e-out/apk-mode
+      - name: Скриншоты и файлы тестов
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-test-results
+          path: e2e-out
+          if-no-files-found: ignore
+
+  android-build:
+    name: Сборка APK
+    needs: web-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      signed: ${{ steps.meta.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Ключ подписи
+        id: key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "file=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Секрет ANDROID_KEYSTORE_BASE64 не задан — подписанный APK для выпуска не собирается."
+          fi
+      - name: Сборка
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ steps.key.outputs.file }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew --no-daemon assembleDebug assembleRelease
+      - name: Проверка APK и подписи
+        id: meta
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          VERSION=$(grep -oP "APP_VERSION = '\K[^']+" js/core/config.js)
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk "dist/JARVIS-$VERSION-test.apk"
+          "$BT/aapt2" dump badging "dist/JARVIS-$VERSION-test.apk" | head -5
+          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk "dist/JARVIS-$VERSION.apk"
+            "$BT/apksigner" verify --verbose --print-certs "dist/JARVIS-$VERSION.apk"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: dist/*.apk
+
+  android-device-test:
+    name: Проверка на эмуляторе Android ${{ matrix.api }}
+    needs: android-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [34]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install websocket-client
+      - name: Включение аппаратного ускорения эмулятора
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Эмулятор и проверки
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash android/ci/run-device-tests.sh device-out
+      - name: Скриншоты и журналы с эмулятора
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-test-results-api${{ matrix.api }}
+          path: device-out
+          if-no-files-found: ignore
+
+  release:
+    name: Выпуск APK
+    needs: [android-build, android-device-test]
+    if: needs.android-build.outputs.signed == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: dist
+      - name: Публикация на странице Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.android-build.outputs.version }}
+        run: |
+          TAG="v$VERSION"
+          APK="dist/JARVIS-$VERSION.apk"
+          NOTES="JARVIS Mobile $VERSION. Установка: откройте файл JARVIS-$VERSION.apk на телефоне. Проверен на эмуляторе Android 14. Сборка ${GITHUB_SHA::7}."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber
+            gh release edit "$TAG" --notes "$NOTES"
+          else
+            gh release create "$TAG" "$APK" --title "JARVIS Mobile $VERSION" --notes "$NOTES" --target "$GITHUB_SHA"
+          fi
+
+  pages:
+    name: Публикация веб-версии
+    needs: web-tests
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Только файлы приложения
+        run: |
+          mkdir site
+          cp -r index.html manifest.webmanifest sw.js css js icons .nojekyll site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

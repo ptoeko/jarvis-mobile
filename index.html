@@ -13,10 +13,30 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="css/app.css">
   <script>
+    // Проверка браузера: на очень старом Chrome или системном WebView
+    // приложение не запустится — вместо пустого экрана показываем, что обновить.
+    (function () {
+      var ok = typeof window.structuredClone === 'function' && 'replaceChildren' in Element.prototype;
+      if (ok) return;
+      document.addEventListener('DOMContentLoaded', function () {
+        var apk = !!window.JarvisAndroid;
+        var p = document.createElement('p');
+        p.className = 'banner';
+        p.id = 'outdated';
+        p.textContent = apk
+          ? 'Для работы JARVIS нужна более новая версия системного компонента «Android System WebView». Обновите «Android System WebView» и «Chrome» в Play Маркете и откройте приложение снова.'
+          : 'Этот браузер устарел. Обновите Chrome в Play Маркете и откройте страницу снова.';
+        document.body.innerHTML = '';
+        document.body.appendChild(p);
+      });
+    })();
+  </script>
+  <script>
     // Обновление версии: когда новая версия офлайн-кеша берёт управление,
     // страница один раз перезагружается, чтобы не смешивать старые и новые файлы.
     (function () {
-      if (!('serviceWorker' in navigator)) return;
+      // В APK файлы приложения уже на телефоне: офлайн-кеш не нужен.
+      if (window.JarvisAndroid || !('serviceWorker' in navigator)) return;
       var hadController = !!navigator.serviceWorker.controller;
       var reloaded = false;
       navigator.serviceWorker.addEventListener('controllerchange', function () {
@@ -114,6 +134,7 @@
           <h3>О приложении</h3>
           <dl class="facts">
             <div><dt>Версия</dt><dd id="app-version">—</dd></div>
+            <div><dt>Вариант</dt><dd id="app-platform">—</dd></div>
             <div><dt>Этап разработки</dt><dd id="app-stage">—</dd></div>
           </dl>
         </div>
@@ -189,7 +210,7 @@
       <p>Значения выгружаются так, как они записаны в реестре. Excel может сам превратить отметки и номера в числа или даты — проверьте файл после открытия.</p>
       <div class="confirm-actions">
         <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
-        <button type="submit" value="export" class="send">Скачать CSV</button>
+        <button type="submit" value="export" class="send" id="export-confirm">Скачать CSV</button>
       </div>
     </form>
   </dialog>

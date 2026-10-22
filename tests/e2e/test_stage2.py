@@ -27,6 +27,8 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix='jarvis-e2e-'))
 OUT.mkdir(parents=True, exist_ok=True)
 NS = 'Не указано'
+import re as _re
+APP_VERSION = _re.search(r"APP_VERSION = '([^']+)'", (ROOT / 'js/core/config.js').read_text(encoding='utf-8')).group(1)
 TITLES = ['№ п/п', 'Дата', 'Объект / здание', 'Место (ось, отметка, помещение)', 'Вид работ',
           'Описание замечания', 'Требование (проект, норма, пункт)', 'Ответственная организация',
           'Срок устранения', 'Статус', 'Исходный текст заметки']
@@ -318,7 +320,8 @@ def status_and_settings_reflect_stage2(page, srv, ctx):
     draft(page, 0).get_by_role('button', name='Добавить в реестр').click()
     page.click('.tab[data-target="settings"]')
     expect(page.locator('#count-records')).to_have_text('1')
-    expect(page.locator('#app-version')).to_have_text('0.2.0')
+    expect(page.locator('#app-version')).to_have_text(APP_VERSION)
+    expect(page.locator('#app-platform')).to_have_text('Веб-приложение')
     expect(page.locator('#app-stage')).to_have_text('Этап 2 из 5')
     page.click('#delete-history')
     page.click('#confirm-delete button[value="delete"]')
@@ -374,12 +377,12 @@ def upgrade_from_stage1(browser, device):
         expect(page.locator('.msg')).to_have_count(4)
         assert page.locator('#parse').count() == 0, 'это должна быть версия 0.1.0'
 
-        # Публикуем 0.2.0 на тот же адрес и открываем приложение.
+        # Публикуем текущую версию на тот же адрес и открываем приложение.
         srv.root = ROOT
         page.reload()
         # Первая загрузка может пройти со старыми файлами из кеша 0.1.0; новая
         # версия кеша берёт управление и один раз перезагружает страницу.
-        page.wait_for_selector('html[data-ready="true"][data-version="0.2.0"]', timeout=30000)
+        page.wait_for_selector(f'html[data-ready="true"][data-version="{APP_VERSION}"]', timeout=30000)
         expect(page.locator('.msg-user .msg-text')).to_have_text(['старое сообщение 1', 'старое сообщение 2'])
         info = page.evaluate('''async () => {
             const db = await new Promise(r => { const q = indexedDB.open('jarvis-mobile'); q.onsuccess = () => r(q.result); });
@@ -390,8 +393,8 @@ def upgrade_from_stage1(browser, device):
             return v; }''')
         assert info['version'] == 1, info
         assert info['stores'] == ['messages', 'meta', 'records'], info
-        assert info['appVersion'] == '0.2.0', info
-        page.wait_for_function("caches.keys().then(k => k.length === 1 && k[0] === 'jarvis-shell-0.2.0')", timeout=15000)
+        assert info['appVersion'] == APP_VERSION, info
+        page.wait_for_function(f"caches.keys().then(k => k.length === 1 && k[0] === 'jarvis-shell-{APP_VERSION}')", timeout=15000)
 
         # Реестр работает поверх старой базы.
         parse_notes(page, 'Ось 1/А — скол')
@@ -401,7 +404,7 @@ def upgrade_from_stage1(browser, device):
         # После обновления приложение открывается без интернета.
         ctx.set_offline(True)
         page.reload()
-        page.wait_for_selector('html[data-ready="true"][data-version="0.2.0"]')
+        page.wait_for_selector(f'html[data-ready="true"][data-version="{APP_VERSION}"]')
         expect(page.locator('#screen-registry')).to_be_visible()
         expect(page.locator('.record-row')).to_have_count(1)
         ctx.set_offline(False)

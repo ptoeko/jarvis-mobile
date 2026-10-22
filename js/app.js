@@ -10,12 +10,16 @@ import { computeFeatures, statusSummary, STATE_LABELS } from './core/status.js';
 import { parseMessage } from './core/parse.js';
 import { createDraft } from './core/records.js';
 import { recordsToCsv, exportFileName } from './core/csv.js';
+import { detectPlatform, installSaveCallback, saveViaBridge } from './core/platform.js';
 
 const SCREENS = ['dialog', 'registry', 'settings', 'status'];
 const FIELD = Object.fromEntries(REGISTRY_FIELDS.map((f) => [f.key, f]));
 const $ = (id) => document.getElementById(id);
 
+const platform = detectPlatform(window);
+
 const env = {
+  platform: platform.kind,
   storage: 'memory',
   persisted: null,
   offlineReady: null,
@@ -59,6 +63,10 @@ async function initPersistence() {
 // ---------- Офлайн-режим ----------
 // Регистрация выполняется в index.html; здесь только проверка результата.
 async function initServiceWorker() {
+  if (platform.kind === 'apk') {
+    env.offlineReady = true; // все файлы внутри APK
+    return;
+  }
   if (!('serviceWorker' in navigator)) {
     env.offlineReady = false;
     return;
@@ -464,8 +472,17 @@ async function handleExport() {
   const filename = exportFileName();
   $('export-summary').textContent = `Будет выгружено записей: ${records.length}, столбцов: ${REGISTRY_FIELDS.length}. Файл: ${filename}.`;
   if ((await ask($('confirm-export'))) !== 'export') return;
+  const csv = recordsToCsv(records);
+  if (platform.kind === 'apk') {
+    // Android показывает окно «Сохранить»: пользователь выбирает папку.
+    const result = await saveViaBridge(platform.bridge, filename, 'text/csv', csv);
+    if (result.status === 'saved') toast(`Файл ${filename} сохранён`);
+    else if (result.status === 'cancelled') toast('Сохранение отменено');
+    else toast(result.message || 'Не удалось сохранить файл.');
+    return;
+  }
   try {
-    downloadText(recordsToCsv(records), filename, 'text/csv;charset=utf-8');
+    downloadText(csv, filename, 'text/csv;charset=utf-8');
     toast(`Файл ${filename} сохранён в «Загрузки»`);
   } catch (e) {
     console.error(e);
@@ -480,6 +497,7 @@ async function renderSettings() {
   $('count-records').textContent = String(counts.records);
   $('storage-kind').textContent = env.storage === 'indexeddb' ? 'В браузере телефона' : 'Только в памяти (не сохраняется)';
   $('app-version').textContent = APP_VERSION;
+  $('app-platform').textContent = platform.kind === 'apk' ? 'Приложение Android (APK)' : 'Веб-приложение';
   $('app-stage').textContent = `Этап ${APP_STAGE} из 5`;
 }
 
@@ -513,7 +531,23 @@ function renderStatus() {
 // Enter переносит строку, чтобы можно было разделять заметки пустой строкой.
 const desktopEnter = window.matchMedia('(hover: hover) and (pointer: fine)');
 
+// Кнопка «Назад» в APK: сначала закрывает открытое окно. Возвращает true,
+// если нажатие обработано; иначе оболочка возвращает к предыдущему экрану.
+function handleBack() {
+  const open = [...document.querySelectorAll('dialog[open]')].pop();
+  if (open) {
+    open.close('cancel');
+    return true;
+  }
+  return false;
+}
+
 async function start() {
+  window.__jarvisBack = handleBack;
+  if (platform.kind === 'apk') {
+    installSaveCallback(window);
+    $('export-confirm').textContent = 'Сохранить CSV';
+  }
   for (const tab of document.querySelectorAll('.tab')) {
     tab.addEventListener('click', () => goTo(tab.dataset.target));
   }

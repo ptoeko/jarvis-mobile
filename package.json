@@ -6,6 +6,6 @@
   "description": "JARVIS Mobile — PWA-помощник инженера. Без сборки и без внешних зависимостей.",
   "scripts": {
     "test": "node --test tests/unit/*.test.mjs",
-    "test:e2e": "python3 tests/e2e/test_app.py"
+    "test:e2e": "python3 tests/e2e/test_app.py && python3 tests/e2e/test_stage2.py && python3 tests/e2e/test_apk_mode.py"
   }
 }

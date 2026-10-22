@@ -244,6 +244,16 @@ def light_theme_screenshot(page, url, ctx):
     shot(page, '07-settings-light')
 
 
+@case
+def outdated_browser_gets_clear_message(page, url, ctx):
+    # Имитация старого браузера: нет structuredClone.
+    page2 = ctx.new_page()
+    page2.add_init_script('delete window.structuredClone')
+    page2.goto(url)
+    expect(page2.locator('#outdated')).to_contain_text('Обновите Chrome')
+    page2.close()
+
+
 # ---------- Запуск ----------
 def main():
     httpd, url = serve()
