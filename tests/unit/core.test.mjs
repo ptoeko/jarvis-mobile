@@ -126,7 +126,6 @@ test('без ИИ диалог показан как демо, ИИ — как �
   assert.equal(f.dialog.state, 'demo');
   assert.equal(f.ai.state, 'planned');
   assert.equal(f.ai.stage, 4);
-  assert.equal(f.registry.stage, 2);
   assert.equal(f['voice-app'].stage, 3);
 });
 
@@ -141,9 +140,14 @@ test('без сети и без офлайн-кеша состояние чес�
   assert.equal(list.find((x) => x.id === 'offline').state, 'unavailable');
 });
 
-test('ни одна функция этапов 2–4 не отмечена как работающая', () => {
-  const working = computeFeatures(BASE_ENV).filter((x) => x.state === 'works').map((x) => x.id);
-  for (const id of ['registry', 'export', 'voice-app', 'ai']) assert.ok(!working.includes(id), id);
+test('этап 2: разбор — демо по правилам, CSV работает, XLSX не подключён; этапы 3–4 не работают', () => {
+  const f = Object.fromEntries(computeFeatures(BASE_ENV).map((x) => [x.id, x]));
+  assert.equal(f.registry.state, 'demo');
+  assert.equal(f.registry.label, 'По правилам');
+  assert.match(f.registry.note, /не ИИ/);
+  assert.equal(f.export.state, 'works');
+  assert.equal(f.xlsx.state, 'off');
+  for (const id of ['voice-app', 'ai']) assert.notEqual(f[id].state, 'works', id);
 });
 
 test('краткая сводка статуса содержит демо-режим', () => {

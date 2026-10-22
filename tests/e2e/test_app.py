@@ -87,9 +87,16 @@ def help_command_gets_labelled_demo_reply(page, url, ctx):
 
 
 @case
-def enter_key_sends(page, url, ctx):
-    page.fill('#input', 'статус')
+def enter_on_phone_adds_line_ctrl_enter_sends(page, url, ctx):
+    # На телефоне Enter переносит строку (нужно для нескольких заметок),
+    # Ctrl+Enter отправляет.
+    page.fill('#input', 'первая строка')
     page.press('#input', 'Enter')
+    page.keyboard.type('вторая')
+    expect(page.locator('#input')).to_have_value('первая строка\nвторая')
+    assert page.locator('.msg').count() == 0
+    page.fill('#input', 'статус')
+    page.press('#input', 'Control+Enter')
     expect(page.locator('.msg-assistant').last).to_contain_text('Состояние приложения')
 
 
@@ -139,6 +146,8 @@ def registry_is_empty_with_all_columns(page, url, ctx):
     expect(page.locator('#records-count')).to_have_text('Записей: 0')
     expect(page.locator('.registry th')).to_have_count(11)
     expect(page.locator('.registry td.empty-row')).to_have_text('Записей пока нет.')
+    expect(page.locator('#export')).to_be_disabled()
+    expect(page.locator('#drafts')).to_be_hidden()
     shot(page, '03-registry')
 
 
@@ -151,8 +160,9 @@ def status_is_honest(page, url, ctx):
     expect(state('dialog')).to_have_text('Демо')
     expect(state('storage')).to_have_text('Работает')
     expect(state('ai')).to_have_text('Этап 4')
-    expect(state('registry')).to_have_text('Этап 2')
-    expect(state('export')).to_have_text('Этап 2')
+    expect(state('registry')).to_have_text('По правилам')
+    expect(state('export')).to_have_text('Работает')
+    expect(state('xlsx')).to_have_text('Не подключено')
     expect(state('voice-app')).to_have_text('Этап 3')
     expect(state('offline')).to_have_text('Работает', timeout=10000)
     shot(page, '04-status')

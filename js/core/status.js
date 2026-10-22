@@ -82,8 +82,26 @@ export function computeFeatures(env) {
     note: 'Микрофон на клавиатуре телефона. Работает средствами клавиатуры, не приложения.',
   });
 
-  features.push({ id: 'registry', name: 'Разбор заметок в реестр', state: 'planned', stage: 2, note: 'Этап 2.' });
-  features.push({ id: 'export', name: 'Экспорт в CSV и Excel', state: 'planned', stage: 2, note: 'Этап 2.' });
+  features.push({
+    id: 'registry',
+    name: 'Разбор заметок в реестр',
+    state: 'demo',
+    label: 'По правилам',
+    note: 'Распознаётся только явно написанное: дата, оси, отметки, нормы, срок, поля с метками. Это не ИИ. Каждая запись подтверждается вручную.',
+  });
+  features.push({
+    id: 'export',
+    name: 'Экспорт в CSV',
+    state: 'works',
+    note: 'Файл для Excel и LibreOffice. Excel может сам превратить отметки и номера в числа или даты.',
+  });
+  features.push({
+    id: 'xlsx',
+    name: 'Экспорт в XLSX',
+    state: 'off',
+    label: 'Не подключено',
+    note: 'Требует отдельного решения о подключении библиотеки.',
+  });
   features.push({ id: 'voice-app', name: 'Кнопка микрофона в приложении', state: 'planned', stage: 3, note: 'Этап 3.' });
   features.push({
     id: 'ai',
@@ -106,6 +124,6 @@ export function computeFeatures(env) {
 export function statusSummary(features) {
   return features
     .filter((f) => ['dialog', 'storage', 'registry', 'ai'].includes(f.id))
-    .map((f) => `${f.name}: ${STATE_LABELS[f.state].toLowerCase()}${f.stage ? ` (этап ${f.stage})` : ''}`)
+    .map((f) => `${f.name}: ${(f.label || STATE_LABELS[f.state]).toLowerCase()}${f.stage && f.state === 'planned' ? ` (этап ${f.stage})` : ''}`)
     .join('\n');
 }

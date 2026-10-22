@@ -3,28 +3,34 @@
 // приложения, видно любому, кто откроет страницу.
 
 export const APP_NAME = 'JARVIS Mobile';
-export const APP_VERSION = '0.1.0';
-export const APP_STAGE = 1;
+export const APP_VERSION = '0.2.0';
+export const APP_STAGE = 2;
 
 export const NOT_SPECIFIED = 'Не указано';
 export const MAX_MESSAGE_LENGTH = 4000;
+// Равен длине сообщения: «Описание» по умолчанию — полный текст заметки.
+export const MAX_FIELD_LENGTH = MAX_MESSAGE_LENGTH;
+export const MAX_NOTES_PER_MESSAGE = 20;
 
-// Схема записи реестра замечаний (предложение, утверждается на этапе 2
-// по образцу владельца). На этапе 1 используется только для отображения
-// пустого реестра.
+// Схема записи реестра замечаний — 11 полей, порядок совпадает с порядком
+// столбцов в таблице и в CSV. Порядок не менять без согласования.
+// editable: поле можно исправить вручную. «№ п/п» присваивается при
+// подтверждении и не меняется; «Исходный текст» хранится как записан.
 export const REGISTRY_FIELDS = [
-  { key: 'number', title: '№ п/п' },
-  { key: 'date', title: 'Дата' },
-  { key: 'object', title: 'Объект / здание' },
-  { key: 'location', title: 'Место (ось, отметка, помещение)' },
-  { key: 'workType', title: 'Вид работ' },
-  { key: 'description', title: 'Описание замечания' },
-  { key: 'requirement', title: 'Требование (проект, норма, пункт)' },
-  { key: 'responsible', title: 'Ответственная организация' },
-  { key: 'deadline', title: 'Срок устранения' },
-  { key: 'status', title: 'Статус' },
-  { key: 'sourceText', title: 'Исходный текст заметки' },
+  { key: 'number', title: '№ п/п', editable: false },
+  { key: 'date', title: 'Дата', editable: true },
+  { key: 'object', title: 'Объект / здание', editable: true },
+  { key: 'location', title: 'Место (ось, отметка, помещение)', editable: true },
+  { key: 'workType', title: 'Вид работ', editable: true },
+  { key: 'description', title: 'Описание замечания', editable: true, multiline: true },
+  { key: 'requirement', title: 'Требование (проект, норма, пункт)', editable: true },
+  { key: 'responsible', title: 'Ответственная организация', editable: true },
+  { key: 'deadline', title: 'Срок устранения', editable: true },
+  { key: 'status', title: 'Статус', editable: true },
+  { key: 'sourceText', title: 'Исходный текст заметки', editable: false, multiline: true },
 ];
+
+export const EDITABLE_FIELDS = REGISTRY_FIELDS.filter((f) => f.editable).map((f) => f.key);
 
 // Создаёт пустую запись реестра: каждое поле — «Не указано».
 export function emptyRecord() {

@@ -12,6 +12,21 @@
   <link rel="icon" href="icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="css/app.css">
+  <script>
+    // Обновление версии: когда новая версия офлайн-кеша берёт управление,
+    // страница один раз перезагружается, чтобы не смешивать старые и новые файлы.
+    (function () {
+      if (!('serviceWorker' in navigator)) return;
+      var hadController = !!navigator.serviceWorker.controller;
+      var reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (!hadController || reloaded) return;
+        reloaded = true;
+        location.reload();
+      });
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    })();
+  </script>
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
@@ -37,22 +52,35 @@
         <ol class="messages" id="messages" aria-live="polite"></ol>
         <div class="empty" id="messages-empty" hidden>
           <p class="empty-title">История пуста</p>
-          <p>Напишите сообщение или «помощь», чтобы узнать, что уже работает. Для голоса нажмите микрофон на клавиатуре телефона.</p>
+          <p>Напишите заметку и нажмите «В реестр» или напишите «помощь», чтобы узнать, что уже работает. Для голоса нажмите микрофон на клавиатуре телефона.</p>
         </div>
         <form class="composer" id="composer" novalidate>
-          <label for="input" class="visually-hidden">Сообщение</label>
-          <textarea id="input" name="message" rows="1" maxlength="4000" enterkeyhint="send"
+          <label for="input" class="visually-hidden">Сообщение или заметка</label>
+          <textarea id="input" name="message" rows="1" maxlength="4000" enterkeyhint="enter"
             autocomplete="off" placeholder="Сообщение или заметка"></textarea>
-          <button type="submit" class="send" id="send">Отправить</button>
           <p class="composer-error" id="composer-error" role="alert" hidden></p>
+          <div class="composer-actions">
+            <button type="button" class="secondary" id="parse">В реестр</button>
+            <button type="submit" class="send" id="send">Отправить</button>
+          </div>
         </form>
       </section>
 
       <!-- Реестр -->
       <section class="screen" id="screen-registry" data-screen="registry" aria-labelledby="t-registry" hidden>
         <h2 id="t-registry">Реестр замечаний</h2>
-        <p class="note">Разбор заметок в записи реестра появится на этапе 2. До этого реестр пуст: приложение не придумывает записи.</p>
-        <p class="count" id="records-count">Записей: 0</p>
+
+        <div class="drafts" id="drafts" hidden>
+          <h3 id="drafts-title">На проверке</h3>
+          <p class="note">Поля заполнены по правилам, не ИИ. Проверьте и исправьте их. В реестр попадают только подтверждённые записи.</p>
+          <ol class="draft-list" id="draft-list"></ol>
+        </div>
+
+        <div class="records-bar">
+          <p class="count" id="records-count">Записей: 0</p>
+          <button type="button" class="secondary" id="export" disabled>Экспорт CSV</button>
+        </div>
+        <p class="note" id="registry-hint">Чтобы добавить запись, напишите заметку в «Диалоге» и нажмите «В реестр».</p>
         <div class="table-wrap" tabindex="0" aria-label="Таблица реестра, прокручивается вбок">
           <table class="registry">
             <thead><tr id="registry-head"></tr></thead>
@@ -126,6 +154,42 @@
       <div class="confirm-actions">
         <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
         <button type="submit" value="delete" class="danger">Удалить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="sheet" id="record-dialog" aria-labelledby="record-title">
+    <form method="dialog" id="record-form" novalidate>
+      <h2 id="record-title" tabindex="-1" autofocus>Запись</h2>
+      <div class="fields" id="record-fields"></div>
+      <p class="form-error" id="record-error" role="alert" hidden></p>
+      <button type="button" class="danger delete-record" id="record-delete">Удалить запись</button>
+      <div class="sheet-actions">
+        <button type="submit" value="cancel" class="secondary" formnovalidate>Отмена</button>
+        <button type="button" class="send" id="record-save">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="confirm" id="confirm-record-delete" aria-labelledby="confirm-record-title">
+    <form method="dialog">
+      <h2 id="confirm-record-title">Удалить запись?</h2>
+      <p>Запись будет удалена с этого телефона. Номера остальных записей не изменятся.</p>
+      <div class="confirm-actions">
+        <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
+        <button type="submit" value="delete" class="danger">Удалить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="confirm" id="confirm-export" aria-labelledby="confirm-export-title">
+    <form method="dialog">
+      <h2 id="confirm-export-title">Экспорт реестра в CSV</h2>
+      <p id="export-summary"></p>
+      <p>Значения выгружаются так, как они записаны в реестре. Excel может сам превратить отметки и номера в числа или даты — проверьте файл после открытия.</p>
+      <div class="confirm-actions">
+        <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
+        <button type="submit" value="export" class="send">Скачать CSV</button>
       </div>
     </form>
   </dialog>

@@ -185,7 +185,7 @@ main {
   position: sticky;
   bottom: 0;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
   gap: 8px;
   margin: 12px -16px 0;
   padding: 10px 16px 12px;
@@ -213,12 +213,56 @@ main {
   font-weight: 650;
   cursor: pointer;
 }
-.send { background: var(--signal); color: var(--on-signal); align-self: end; }
+.send { background: var(--signal); color: var(--on-signal); }
 .send:active { filter: brightness(0.92); }
+button:disabled { opacity: 0.5; cursor: default; }
 
-.composer-error { grid-column: 1 / -1; margin: 0; color: var(--danger); font-size: 0.875rem; }
+.composer-error { margin: 0; color: var(--danger); font-size: 0.875rem; }
+.composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.composer-actions .secondary { border-color: var(--signal); color: var(--signal-text); }
 
-/* Реестр */
+/* Реестр: черновики */
+.drafts { margin: 0 0 20px; }
+.drafts h3 { margin: 4px 0 4px; font-size: 1.0625rem; color: var(--signal-text); }
+.draft-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.draft {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--signal);
+  border-radius: var(--radius-s);
+  background: var(--panel);
+}
+.draft h4 { margin: 0 0 10px; font-size: 0.9375rem; color: var(--muted); font-weight: 600; }
+.draft-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+.source {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-s);
+}
+.source-title { margin: 0 0 2px; font-size: 0.8125rem; color: var(--muted); }
+.source-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.fields { display: flex; flex-direction: column; gap: 10px; }
+.field label { display: block; margin-bottom: 3px; font-size: 0.8125rem; color: var(--muted); }
+.field input::placeholder, .field textarea::placeholder { color: var(--muted); opacity: 1; }
+.field input, .field textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg);
+  line-height: 1.35;
+}
+.field textarea { resize: vertical; }
+.field [aria-invalid="true"] { border-color: var(--danger); }
+.field-error, .form-error { margin: 4px 0 0; color: var(--danger); font-size: 0.875rem; }
+
+/* Реестр: таблица */
+.records-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.records-bar .count { margin: 0; }
 .count { margin: 0 0 8px; font-weight: 600; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-s); }
 .registry { border-collapse: collapse; font-size: 0.875rem; min-width: 100%; }
@@ -229,8 +273,38 @@ main {
   vertical-align: top;
   white-space: nowrap;
 }
+.registry td { max-width: 16em; overflow: hidden; text-overflow: ellipsis; }
 .registry th { background: var(--panel); color: var(--muted); font-weight: 600; }
-.registry td.empty-row { color: var(--muted); white-space: normal; }
+.registry td.empty-row { color: var(--muted); white-space: normal; max-width: none; }
+.record-row { cursor: pointer; }
+.record-row:active td { background: var(--panel-2); }
+.record-row td[data-field="number"] { color: var(--signal-text); font-weight: 650; font-variant-numeric: tabular-nums; }
+
+/* Окно редактирования записи */
+.sheet {
+  width: min(96vw, 560px);
+  max-height: 92dvh;
+  padding: 18px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--panel);
+  color: var(--text);
+}
+.sheet::backdrop { background: rgb(5 15 25 / 0.6); }
+.sheet h2 { margin: 0 0 12px; font-size: 1.125rem; }
+.sheet h2:focus { outline: none; }
+.sheet-actions {
+  position: sticky;
+  bottom: -18px;
+  display: flex;
+  gap: 8px;
+  margin: 14px -16px -18px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+.sheet-actions button { flex: 1; white-space: nowrap; }
+.delete-record { margin-top: 16px; }
 
 /* Настройки */
 .group { padding: 14px 0; border-bottom: 1px solid var(--line); }

@@ -1,7 +1,7 @@
 // Service worker: сохраняет файлы приложения на телефоне, чтобы оно
 // открывалось без интернета. Пользовательские данные сюда не попадают.
 // При изменении любого файла приложения увеличивайте VERSION.
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const CACHE = `jarvis-shell-${VERSION}`;
 const SHELL = [
   './',
@@ -16,13 +16,22 @@ const SHELL = [
   './js/core/idb.js',
   './js/core/ai.js',
   './js/core/status.js',
+  './js/core/parse.js',
+  './js/core/records.js',
+  './js/core/csv.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
 ];
 
+// cache: 'reload' — берём файлы с сервера, а не из кеша браузера, чтобы
+// новая версия не сохранила старые копии файлов.
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {
