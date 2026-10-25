@@ -325,6 +325,18 @@ if __name__ == '__main__':
         {'full': full, 'smoke': smoke, 'update': update}[MODE]()
     except Exception:
         try:
+            text = adb('logcat', '-d', check=False)
+            lines = text.splitlines()
+            idx = [n for n, l in enumerate(lines) if 'FATAL EXCEPTION' in l or 'AndroidRuntime' in l and 'Caused by' in l]
+            if idx:
+                for l in lines[idx[0]:idx[0] + 40]:
+                    print(f'::error title=Аварийное завершение ({MODE})::{l[:400]}', flush=True)
+            else:
+                for l in [l for l in lines if 'JarvisMobile' in l or 'ru.jarvis' in l][-25:]:
+                    print(f'::error title=Журнал приложения ({MODE})::{l[:400]}', flush=True)
+        except Exception:
+            pass
+        try:
             shot('failure')
             adb('logcat', '-d') and (OUT / 'logcat.txt').write_text(adb('logcat', '-d'), encoding='utf-8')
         except Exception:
