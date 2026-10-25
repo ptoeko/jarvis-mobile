@@ -130,6 +130,14 @@ export function computeFeatures(env) {
     note: 'Кнопка «Копировать» у сообщения или выделение долгим нажатием.',
   });
   features.push({
+    id: 'share',
+    name: 'Поделиться',
+    state: 'works',
+    note: apk
+      ? 'Сообщение, запись реестра или файл Excel — в Telegram, WhatsApp, MAX, на почту или в другое приложение.'
+      : 'Через системное окно «Поделиться» браузера.',
+  });
+  features.push({
     id: 'backup',
     name: 'Резервная копия и восстановление',
     state: 'works',

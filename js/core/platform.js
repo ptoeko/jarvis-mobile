@@ -131,3 +131,21 @@ export async function copyText(win, text) {
 export function supportsFiles(bridge) {
   return !bridge || (typeof bridge.writeChunk === 'function' && typeof bridge.saveChunked === 'function');
 }
+
+// ---------- 0.4.2: «Поделиться» ----------
+// files: [{ blob, name, type }]. target: telegram | whatsapp | max | email | other.
+// Возвращает { status: 'shared' | 'error', message }.
+export async function shareViaBridge(bridge, { target, subject, text, files = [] }) {
+  try {
+    const staged = [];
+    for (const f of files) staged.push({ token: await sendBlob(bridge, f.blob), name: f.name, type: f.type });
+    const result = String(bridge.shareChunked(JSON.stringify({ target, subject, text, files: staged })) || '');
+    return result === 'ok' ? { status: 'shared' } : { status: 'error', message: result || 'Не удалось поделиться.' };
+  } catch (error) {
+    return { status: 'error', message: error.message || 'Не удалось поделиться.' };
+  }
+}
+
+export function supportsShare(bridge) {
+  return !!bridge && typeof bridge.shareChunked === 'function';
+}
