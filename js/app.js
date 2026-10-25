@@ -281,6 +281,20 @@ function handleFilesChosen(event) {
   renderPendingFiles();
 }
 
+// Значок «копировать» собирается из элементов SVG, без вставки HTML-строк.
+function copyIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const rect = document.createElementNS(NS, 'rect');
+  for (const [k, v] of Object.entries({ x: 8, y: 8, width: 12, height: 12, rx: 2 })) rect.setAttribute(k, String(v));
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3');
+  svg.append(rect, path);
+  return svg;
+}
+
 // ---------- Диалог ----------
 function messageElement(message) {
   const meta = el('div', { className: 'msg-meta' });
@@ -296,7 +310,7 @@ function messageElement(message) {
   meta.append(who);
   if (message.text) {
     const copy = el('button', { type: 'button', className: 'copy-btn', title: 'Копировать текст' });
-    copy.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
+    copy.append(copyIcon());
     copy.setAttribute('aria-label', 'Копировать текст сообщения');
     copy.addEventListener('click', async () => {
       const ok = await copyText(window, message.text);
