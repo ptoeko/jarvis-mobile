@@ -472,8 +472,24 @@ def files_flow(csv_bytes):
         db.close(); return items.map(i => i.blob.size); })()""")
     assert restored == [len(csv_bytes)], f'файл после восстановления: {restored}'
     shot('registry-after-restore')
-    page.close()
     log('Восстановление из копии через окно Android: OK')
+
+    # 0.4.1: экспорт в Excel через окно «Сохранить».
+    page.js("document.querySelector('#export-xlsx').click()")
+    page.wait("document.querySelector('#confirm-export-xlsx').open", 5, 'окно экспорта Excel')
+    page.js("document.querySelector('#export-xlsx-confirm').click()")
+    tap_save_in_picker()
+    page.wait("(document.querySelector('#toast').textContent || '').includes('.xlsx')", 40, 'файл Excel сохранён')
+    found = [l.strip() for l in adb('shell', 'find', '/sdcard/', '-name', "'jarvis-reestr-*.xlsx'", check=False).splitlines() if l.strip()]
+    assert found, 'файл Excel не найден'
+    adb('pull', found[0], str(OUT / 'registry.xlsx'))
+    import zipfile
+    with zipfile.ZipFile(OUT / 'registry.xlsx') as z:
+        assert z.testzip() is None, 'архив Excel повреждён'
+        sheet = z.read('xl/worksheets/sheet1.xml').decode('utf-8')
+    assert 'Пом. 2.15' in sheet, 'в таблице нет записи'
+    page.close()
+    log(f'Экспорт в Excel через окно Android: OK ({found[0]})')
 
 
 def killed_by_system():

@@ -10,6 +10,7 @@ import { computeFeatures, statusSummary, STATE_LABELS } from './core/status.js';
 import { parseMessage } from './core/parse.js';
 import { createDraft } from './core/records.js';
 import { recordsToCsv, exportFileName } from './core/csv.js';
+import { recordsToXlsx, xlsxFileName, XLSX_MIME, registryTable } from './core/xlsx.js';
 import { detectPlatform, installSaveCallback, saveViaBridge, saveBlobViaBridge, openBlobViaBridge, copyText } from './core/platform.js';
 import { ACCEPT, checkFiles, formatSize, kindLabel, attachmentRefs } from './core/attachments.js';
 import { createBackup, inspectBackup, restoreBackup, backupFileName, BackupError, META_LAST_BACKUP } from './core/backup.js';
@@ -548,6 +549,7 @@ async function renderRecords() {
   const records = await store.listRecords();
   $('records-count').textContent = `Записей: ${records.length}`;
   $('export').disabled = records.length === 0;
+  $('export-xlsx').disabled = records.length === 0;
   $('registry-hint').textContent = records.length
     ? 'Нажмите на строку, чтобы изменить или удалить запись.'
     : 'Чтобы добавить запись, напишите заметку в «Диалоге» и нажмите «В реестр». Экспорт станет доступен после первой записи.';
@@ -690,6 +692,45 @@ async function handleExport() {
   }
 }
 
+let exportingXlsx = false;
+async function handleExportXlsx() {
+  if (exportingXlsx) return;
+  let records;
+  try {
+    records = await store.listRecords();
+  } catch (e) {
+    console.error(e);
+    toast('Не удалось прочитать реестр. Перезапустите приложение и повторите.');
+    return;
+  }
+  if (records.length === 0) {
+    toast('Реестр пуст: экспортировать нечего.');
+    return;
+  }
+  const filename = xlsxFileName();
+  const columns = registryTable([]).headers.length;
+  $('export-xlsx-summary').textContent = `Будет выгружено записей: ${records.length}, столбцов: ${columns}. Файл: ${filename}.`;
+  if ((await ask($('confirm-export-xlsx'))) !== 'export') return;
+  exportingXlsx = true;
+  try {
+    const blob = await recordsToXlsx(records);
+    if (platform.kind === 'apk') {
+      const result = await saveBlobViaBridge(platform.bridge, blob, filename, XLSX_MIME);
+      if (result.status === 'saved') toast(`Файл ${filename} сохранён`);
+      else if (result.status === 'cancelled') toast('Сохранение отменено');
+      else toast(result.message || 'Не удалось сохранить файл.');
+      return;
+    }
+    downloadBlob(blob, filename);
+    toast(`Файл ${filename} сохранён в «Загрузки»`);
+  } catch (e) {
+    console.error(e);
+    toast('Не удалось создать файл Excel. Повторите. Как запасной вариант есть «Экспорт CSV».');
+  } finally {
+    exportingXlsx = false;
+  }
+}
+
 // ---------- Настройки ----------
 async function renderSettings() {
   const counts = await store.counts();
@@ -824,6 +865,7 @@ async function start() {
   if (platform.kind === 'apk') {
     installSaveCallback(window);
     $('export-confirm').textContent = 'Сохранить CSV';
+    $('export-xlsx-confirm').textContent = 'Сохранить Excel';
   }
   for (const tab of document.querySelectorAll('.tab')) {
     tab.addEventListener('click', () => goTo(tab.dataset.target));
@@ -865,6 +907,7 @@ async function start() {
   $('backup-restore').addEventListener('click', () => $('restore-input').click());
   $('restore-input').addEventListener('change', handleRestoreChosen);
   $('export').addEventListener('click', handleExport);
+  $('export-xlsx').addEventListener('click', handleExportXlsx);
   $('record-save').addEventListener('click', saveRecord);
   $('record-delete').addEventListener('click', deleteOpenRecord);
   $('record-dialog').addEventListener('close', () => { openRecordId = null; });

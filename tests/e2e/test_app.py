@@ -162,7 +162,7 @@ def status_is_honest(page, url, ctx):
     expect(state('ai')).to_have_text('Этап 4')
     expect(state('registry')).to_have_text('По правилам')
     expect(state('export')).to_have_text('Работает')
-    expect(state('xlsx')).to_have_text('Не подключено')
+    expect(state('xlsx')).to_have_text('Работает')  # с 0.4.1
     expect(state('voice-app')).to_have_text('Этап 3')
     expect(state('offline')).to_have_text('Работает', timeout=10000)
     shot(page, '04-status')

@@ -137,10 +137,9 @@ export function computeFeatures(env) {
   });
   features.push({
     id: 'xlsx',
-    name: 'Экспорт в XLSX',
-    state: 'off',
-    label: 'Не подключено',
-    note: 'Требует отдельного решения о подключении библиотеки.',
+    name: 'Экспорт в Excel (XLSX)',
+    state: 'works',
+    note: 'Реестр → «Экспорт в Excel». Все значения — текст, шапка закреплена, фильтры, столбец с именами файлов.',
   });
   features.push({ id: 'voice-app', name: 'Кнопка микрофона в приложении', state: 'planned', stage: 3, note: 'Этап 3.' });
   features.push({

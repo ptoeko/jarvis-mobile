@@ -146,7 +146,7 @@ test('этап 2: разбор — демо по правилам, CSV рабо�
   assert.equal(f.registry.label, 'По правилам');
   assert.match(f.registry.note, /не ИИ/);
   assert.equal(f.export.state, 'works');
-  assert.equal(f.xlsx.state, 'off');
+  assert.equal(f.xlsx.state, 'works'); // с 0.4.1 — экспорт в Excel
   for (const id of ['voice-app', 'ai']) assert.notEqual(f[id].state, 'works', id);
 });
 
@@ -177,7 +177,9 @@ test('приложение не обращается к внешним серв�
   const files = walk(ROOT).filter((p) => /\.(js|html|css)$/.test(p));
   for (const file of files) {
     const text = readFileSync(file, 'utf8');
-    assert.doesNotMatch(text, /https?:\/\/(?!www\.w3\.org)/, `${file}: внешний адрес`);
+    // Исключения — идентификаторы пространств имён XML (SVG, формат Excel),
+    // это имена внутри файлов, по ним не выполняется ни одного запроса.
+    assert.doesNotMatch(text, /https?:\/\/(?!www\.w3\.org\/|schemas\.openxmlformats\.org\/|purl\.org\/dc\/)/, `${file}: внешний адрес`);
   }
 });
 
