@@ -335,6 +335,10 @@ def tap_node(attr_regex, timeout=30, what=None):
             return
         time.sleep(1.5)
     shot('not-found')
+    xml = ui_dump()
+    nodes = re.findall(r'<node [^>]*?text="([^"]*)"[^>]*?content-desc="([^"]*)"[^>]*?enabled="(\w+)"[^>]*?selected="(\w+)"', xml)
+    print(f'::error title=Экран ({what})::' + '; '.join(f'{t or d}[{"вкл" if e == "true" else "выкл"}{", отмечен" if sel == "true" else ""}]'
+                                                     for t, d, e, sel in nodes if t or d)[:900], flush=True)
     raise AssertionError(f'на экране нет: {what or attr_regex}')
 
 

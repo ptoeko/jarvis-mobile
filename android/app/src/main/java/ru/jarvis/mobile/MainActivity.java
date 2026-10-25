@@ -60,16 +60,6 @@ public class MainActivity extends Activity {
     private static final int REQUEST_SAVE_FILE = 1001;
     private static final int REQUEST_CHOOSE_FILE = 1002;
     private static final Pattern TOKEN = Pattern.compile("[A-Za-z0-9-]{1,80}");
-    // Типы файлов для кнопки «Прикрепить»: фото, PDF, Word, Excel. Тип
-    // octet-stream — потому что некоторые файловые менеджеры не знают тип docx/xlsx.
-    private static final String[] ATTACH_MIME = {
-            "image/*", "video/*", "application/pdf",
-            "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "application/rtf", "application/vnd.oasis.opendocument.text",
-            "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.ms-excel.sheet.macroEnabled.12", "text/csv",
-            "application/vnd.oasis.opendocument.spreadsheet", "application/octet-stream",
-    };
     private static final String STATE_PENDING_SAVE = "jarvis.pendingSave";
     private static final String PENDING_FILE = "pending-export.bin";
 
@@ -465,7 +455,9 @@ public class MainActivity extends Activity {
             intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("*/*");
-            if (attach || images || videos) intent.putExtra(Intent.EXTRA_MIME_TYPES, ATTACH_MIME);
+            // Без фильтра по типу: телефоны по-разному называют типы файлов
+            // (CSV, DOCX, XLSX), и фильтр мог сделать нужный файл недоступным.
+            // Неподходящий файл приложение отклонит с понятным сообщением.
             if (params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
                 intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
             }
