@@ -376,6 +376,43 @@ public class MainActivity extends Activity {
             return result.get();
         }
 
+        /**
+         * «Поделиться»: текст и подготовленные файлы — в выбранное приложение.
+         * JSON: { target, subject, text, files: [{ token, name, type }] }.
+         * Возвращает "ok" или понятный текст ошибки.
+         */
+        @JavascriptInterface
+        public String shareChunked(String json) {
+            try {
+                JSONObject req = new JSONObject(json);
+                String target = req.optString("target", "other");
+                ArrayList<Uri> uris = new ArrayList<>();
+                List<String> types = new ArrayList<>();
+                org.json.JSONArray files = req.optJSONArray("files");
+                if (files != null && files.length() > 0) {
+                    File dir = new File(new File(getCacheDir(), FilesProvider.DIR_SHARE), UUID.randomUUID().toString());
+                    if (!dir.mkdirs()) return "Не хватает места в памяти телефона.";
+                    for (int i = 0; i < files.length(); i++) {
+                        JSONObject f = files.getJSONObject(i);
+                        File staged = stagingFile(f.optString("token"));
+                        if (staged == null || !staged.exists()) return "Файл не подготовлен. Повторите.";
+                        String name = FilesProvider.safeName(f.optString("name"));
+                        File sub = new File(dir, String.valueOf(i));
+                        if (!sub.mkdirs()) return "Не хватает места в памяти телефона.";
+                        File out = new File(sub, name);
+                        if (!staged.renameTo(out)) return "Не удалось подготовить файл.";
+                        uris.add(FilesProvider.uriFor(FilesProvider.DIR_SHARE, dir.getName() + "/" + i + "/" + name));
+                        types.add(f.optString("type", "application/octet-stream"));
+                    }
+                }
+                Intent send = buildShareIntent(uris, types, req.optString("subject"), req.optString("text"));
+                return startShare(target, send);
+            } catch (Exception e) {
+                Log.e(TAG, "share failed", e);
+                return "Не удалось поделиться.";
+            }
+        }
+
         /** Копирование текста в буфер обмена телефона. */
         @JavascriptInterface
         public boolean copyText(String text) {
@@ -385,6 +422,107 @@ public class MainActivity extends Activity {
                 if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("JARVIS", text));
             });
             return true;
+        }
+    }
+
+    // ---------- «Поделиться» ----------
+
+    // Приложения по убыванию приоритета: если основного нет, пробуется следующее.
+    private static final Map<String, String[]> SHARE_PACKAGES = new HashMap<>();
+    private static final Map<String, String> SHARE_NAMES = new HashMap<>();
+    static {
+        SHARE_PACKAGES.put("telegram", new String[]{"org.telegram.messenger", "org.telegram.messenger.web", "org.thunderdog.challegram"});
+        SHARE_PACKAGES.put("whatsapp", new String[]{"com.whatsapp", "com.whatsapp.w4b"});
+        SHARE_PACKAGES.put("max", new String[]{"ru.oneme.app"});
+        SHARE_NAMES.put("telegram", "Telegram");
+        SHARE_NAMES.put("whatsapp", "WhatsApp");
+        SHARE_NAMES.put("max", "MAX");
+    }
+
+    private static Intent buildShareIntent(ArrayList<Uri> uris, List<String> types, String subject, String text) {
+        Intent send;
+        if (uris.size() > 1) {
+            send = new Intent(Intent.ACTION_SEND_MULTIPLE);
+            send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+        } else {
+            send = new Intent(Intent.ACTION_SEND);
+            if (uris.size() == 1) send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+        }
+        String type = "text/plain";
+        if (!uris.isEmpty()) {
+            type = types.get(0);
+            for (String t : types) {
+                if (!t.equals(type)) {
+                    type = t.startsWith("image/") && type.startsWith("image/") ? "image/*"
+                            : t.startsWith("video/") && type.startsWith("video/") ? "video/*" : "*/*";
+                }
+            }
+        }
+        send.setType(type);
+        if (subject != null && !subject.isEmpty()) send.putExtra(Intent.EXTRA_SUBJECT, subject);
+        if (text != null && !text.isEmpty()) send.putExtra(Intent.EXTRA_TEXT, text);
+        if (!uris.isEmpty()) {
+            ClipData clip = ClipData.newRawUri("", uris.get(0));
+            for (int i = 1; i < uris.size(); i++) clip.addItem(new ClipData.Item(uris.get(i)));
+            send.setClipData(clip);
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        }
+        return send;
+    }
+
+    // Запуск на главном потоке; ответ — "ok" или текст ошибки.
+    private String startShare(String target, Intent send) {
+        AtomicReference<String> result = new AtomicReference<>("Не удалось поделиться.");
+        CountDownLatch done = new CountDownLatch(1);
+        runOnUiThread(() -> {
+            try {
+                result.set(launchShare(target, send));
+            } catch (Exception e) {
+                Log.e(TAG, "share launch failed", e);
+            } finally {
+                done.countDown();
+            }
+        });
+        try {
+            done.await(5, TimeUnit.SECONDS);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+        return result.get();
+    }
+
+    private String launchShare(String target, Intent send) {
+        String[] packages = SHARE_PACKAGES.get(target);
+        if (packages != null) {
+            for (String pkg : packages) {
+                Intent direct = new Intent(send).setPackage(pkg);
+                try {
+                    startActivity(direct);
+                    return "ok";
+                } catch (ActivityNotFoundException ignored) {
+                    // это приложение не установлено — пробуем следующее
+                }
+            }
+            return SHARE_NAMES.get(target) + " не установлен на телефоне. Выберите «Другое приложение».";
+        }
+        if ("email".equals(target)) {
+            // Только почтовые приложения: «селектор» mailto: отсекает мессенджеры.
+            Intent mail = new Intent(send);
+            mail.setSelector(new Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")));
+            try {
+                startActivity(Intent.createChooser(mail, "Отправить по почте")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+                return "ok";
+            } catch (ActivityNotFoundException e) {
+                return "На телефоне нет почтового приложения.";
+            }
+        }
+        try {
+            startActivity(Intent.createChooser(send, "Поделиться")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+            return "ok";
+        } catch (ActivityNotFoundException e) {
+            return "На телефоне нет приложений, которым можно отправить это.";
         }
     }
 

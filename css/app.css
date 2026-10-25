@@ -482,3 +482,9 @@ button:disabled { opacity: 0.5; cursor: default; }
 .records-bar .count { white-space: nowrap; }
 .export-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .export-actions button { padding: 0 10px; }
+
+.share-btn svg circle { fill: var(--muted); stroke: none; }
+.share-btn svg path { stroke: var(--muted); stroke-width: 1.8; fill: none; }
+.record-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.record-tools button { flex: 1 1 140px; }
+.record-tools .delete-record { margin-top: 0; }

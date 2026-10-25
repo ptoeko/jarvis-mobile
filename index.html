@@ -208,7 +208,10 @@
       <h2 id="record-title" tabindex="-1" autofocus>Запись</h2>
       <div class="fields" id="record-fields"></div>
       <p class="form-error" id="record-error" role="alert" hidden></p>
-      <button type="button" class="danger delete-record" id="record-delete">Удалить запись</button>
+      <div class="record-tools">
+        <button type="button" class="secondary" id="record-share">Поделиться</button>
+        <button type="button" class="danger delete-record" id="record-delete">Удалить запись</button>
+      </div>
       <div class="sheet-actions">
         <button type="submit" value="cancel" class="secondary" formnovalidate>Отмена</button>
         <button type="button" class="send" id="record-save">Сохранить</button>
@@ -246,7 +249,23 @@
       <p>Все значения записываются как текст: Excel не превратит отметки, оси и даты в числа. Шапка закреплена, у столбцов есть фильтры. В последнем столбце — имена приложенных файлов.</p>
       <div class="confirm-actions">
         <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
+        <button type="submit" value="share" class="secondary" id="export-xlsx-share">Поделиться</button>
         <button type="submit" value="export" class="send" id="export-xlsx-confirm">Скачать Excel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="confirm attach-menu" id="share-menu" aria-labelledby="share-menu-title">
+    <form method="dialog">
+      <h2 id="share-menu-title">Поделиться</h2>
+      <p class="note" id="share-what"></p>
+      <div class="menu-list">
+        <button type="submit" value="telegram" class="secondary">Telegram</button>
+        <button type="submit" value="whatsapp" class="secondary">WhatsApp</button>
+        <button type="submit" value="max" class="secondary">MAX</button>
+        <button type="submit" value="email" class="secondary">Почта</button>
+        <button type="submit" value="other" class="secondary">Другое приложение</button>
+        <button type="submit" value="cancel" class="secondary">Отмена</button>
       </div>
     </form>
   </dialog>

@@ -488,6 +488,25 @@ def files_flow(csv_bytes):
         assert z.testzip() is None, 'архив Excel повреждён'
         sheet = z.read('xl/worksheets/sheet1.xml').decode('utf-8')
     assert 'Пом. 2.15' in sheet, 'в таблице нет записи'
+
+    # 0.4.2: «Поделиться». Telegram на эмуляторе не установлен — понятное сообщение;
+    # «Другое приложение» — системное окно Android «Поделиться».
+    page.js("location.hash = 'registry'")
+    page.js("document.querySelector('.record-row').click()")
+    page.wait("document.querySelector('#record-dialog').open", 5)
+    page.js("document.querySelector('#record-share').click()")
+    page.wait("document.querySelector('#share-menu').open", 5, 'меню «Поделиться»')
+    page.js("document.querySelector('#share-menu button[value=telegram]').click()")
+    page.wait("document.querySelector('#notice').open && document.querySelector('#notice-text').textContent.includes('Telegram не установлен')", 15, 'сообщение «не установлен»')
+    page.js("document.querySelector('#notice button[value=ok]').click()")
+    page.js("document.querySelector('#record-share').click()")
+    page.wait("document.querySelector('#share-menu').open", 5)
+    page.js("document.querySelector('#share-menu button[value=other]').click()")
+    wait_ui_text(r'package="com\.android\.intentresolver"|text="Поделиться"|text="Share"', 20)
+    shot('android-share-sheet')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+    time.sleep(1)
+    log('Поделиться: OK (сообщение «не установлен», системное окно)')
     page.close()
     log(f'Экспорт в Excel через окно Android: OK ({found[0]})')
 

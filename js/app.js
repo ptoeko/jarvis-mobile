@@ -11,7 +11,8 @@ import { parseMessage } from './core/parse.js';
 import { createDraft } from './core/records.js';
 import { recordsToCsv, exportFileName } from './core/csv.js';
 import { recordsToXlsx, xlsxFileName, XLSX_MIME, registryTable } from './core/xlsx.js';
-import { detectPlatform, installSaveCallback, saveViaBridge, saveBlobViaBridge, openBlobViaBridge, copyText } from './core/platform.js';
+import { detectPlatform, installSaveCallback, saveViaBridge, saveBlobViaBridge, openBlobViaBridge, copyText, shareViaBridge, supportsShare } from './core/platform.js';
+import { messageShare, recordShare, registryShare, targetLabel } from './core/share.js';
 import { ACCEPT, checkFiles, formatSize, kindLabel, attachmentRefs } from './core/attachments.js';
 import { createBackup, inspectBackup, restoreBackup, backupFileName, BackupError, META_LAST_BACKUP } from './core/backup.js';
 
@@ -282,6 +283,25 @@ function handleFilesChosen(event) {
   renderPendingFiles();
 }
 
+// Значок «поделиться» (три точки, соединённые линиями).
+function shareIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [cx, cy] of [[18, 5], [6, 12], [18, 19]]) {
+    const c = document.createElementNS(NS, 'circle');
+    c.setAttribute('cx', String(cx));
+    c.setAttribute('cy', String(cy));
+    c.setAttribute('r', '2.5');
+    svg.append(c);
+  }
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M8.2 10.9l7.6-4.4M8.2 13.1l7.6 4.4');
+  svg.append(path);
+  return svg;
+}
+
 // Значок «копировать» собирается из элементов SVG, без вставки HTML-строк.
 function copyIcon() {
   const NS = 'http://www.w3.org/2000/svg';
@@ -318,6 +338,13 @@ function messageElement(message) {
       toast(ok ? 'Текст скопирован' : 'Не удалось скопировать. Выделите текст долгим нажатием.');
     });
     meta.append(copy);
+  }
+  if (message.text || attachmentRefs(message.attachments).length) {
+    const share = el('button', { type: 'button', className: 'copy-btn share-btn', title: 'Поделиться' });
+    share.setAttribute('aria-label', 'Поделиться сообщением');
+    share.append(shareIcon());
+    share.addEventListener('click', () => shareContent(messageShare(message)));
+    meta.append(share);
   }
   const item = el('li', { className: `msg msg-${message.role}`, dataset: { source: message.source, id: message.id } }, meta);
   if (message.text) item.append(el('div', { className: 'msg-text' }, message.text));
@@ -617,6 +644,12 @@ async function saveRecord() {
   }
 }
 
+async function shareOpenRecord() {
+  const record = (await store.listRecords()).find((r) => r.id === openRecordId);
+  if (!record) return;
+  await shareContent(recordShare(record), `Запись № ${record.number}`);
+}
+
 async function deleteOpenRecord() {
   const number = $('record-title').textContent.replace('Запись ', '');
   $('confirm-record-title').textContent = `Удалить запись ${number}?`;
@@ -692,6 +725,56 @@ async function handleExport() {
   }
 }
 
+// ---------- Поделиться ----------
+// content: { subject, text, attachments: [ссылки на файлы], files?: [{ blob, name, type }] }
+let sharing = false;
+async function shareContent(content, what = '') {
+  if (sharing) return;
+  $('share-what').textContent = what || (content.attachments?.length ? `Текст и файлов: ${content.attachments.length}` : 'Текст');
+  const target = await ask($('share-menu'));
+  if (!target || target === 'cancel') return;
+  sharing = true;
+  try {
+    const files = [...(content.files || [])];
+    for (const ref of content.attachments || []) {
+      const item = await store.getAttachment(ref.id);
+      if (item?.blob) files.push({ blob: item.blob, name: item.name, type: item.type });
+    }
+    const total = files.reduce((n, f) => n + f.blob.size, 0);
+    if (total > 10 * 1024 * 1024) toast('Готовлю файлы…');
+
+    if (platform.kind === 'apk' && supportsShare(platform.bridge)) {
+      const result = await shareViaBridge(platform.bridge, { target, subject: content.subject, text: content.text, files });
+      if (result.status !== 'shared') await notice('Не отправлено', result.message);
+      return;
+    }
+    // Браузер: письмо — через почтовую программу (только текст), остальное —
+    // системное окно «Поделиться», где выбирается мессенджер.
+    if (target === 'email' && files.length === 0) {
+      location.href = `mailto:?subject=${encodeURIComponent(content.subject || '')}&body=${encodeURIComponent(content.text || '')}`;
+      return;
+    }
+    const asFiles = files.map((f) => new File([f.blob], f.name, { type: f.type }));
+    const data = { title: content.subject, text: content.text };
+    if (asFiles.length && navigator.canShare?.({ files: asFiles })) data.files = asFiles;
+    if (navigator.share) {
+      try {
+        await navigator.share(data);
+      } catch (e) {
+        if (e?.name !== 'AbortError') throw e;
+      }
+      return;
+    }
+    const ok = await copyText(window, content.text || '');
+    await notice('Поделиться', `В этом браузере нельзя открыть ${targetLabel(target)} напрямую.${ok ? ' Текст скопирован — вставьте его в чат.' : ''}`);
+  } catch (e) {
+    console.error(e);
+    toast('Не удалось поделиться.');
+  } finally {
+    sharing = false;
+  }
+}
+
 let exportingXlsx = false;
 async function handleExportXlsx() {
   if (exportingXlsx) return;
@@ -710,10 +793,16 @@ async function handleExportXlsx() {
   const filename = xlsxFileName();
   const columns = registryTable([]).headers.length;
   $('export-xlsx-summary').textContent = `Будет выгружено записей: ${records.length}, столбцов: ${columns}. Файл: ${filename}.`;
-  if ((await ask($('confirm-export-xlsx'))) !== 'export') return;
+  const choice = await ask($('confirm-export-xlsx'));
+  if (choice !== 'export' && choice !== 'share') return;
   exportingXlsx = true;
   try {
     const blob = await recordsToXlsx(records);
+    if (choice === 'share') {
+      exportingXlsx = false;
+      await shareContent({ ...registryShare(records.length), files: [{ blob, name: filename, type: XLSX_MIME }] }, `Файл ${filename}`);
+      return;
+    }
     if (platform.kind === 'apk') {
       const result = await saveBlobViaBridge(platform.bridge, blob, filename, XLSX_MIME);
       if (result.status === 'saved') toast(`Файл ${filename} сохранён`);
@@ -910,6 +999,7 @@ async function start() {
   $('export-xlsx').addEventListener('click', handleExportXlsx);
   $('record-save').addEventListener('click', saveRecord);
   $('record-delete').addEventListener('click', deleteOpenRecord);
+  $('record-share').addEventListener('click', shareOpenRecord);
   $('record-dialog').addEventListener('close', () => { openRecordId = null; });
 
   store = await initStore();
