@@ -163,7 +163,9 @@ class Page:
     def js(self, expression):
         self.n += 1
         self.ws.send(json.dumps({'id': self.n, 'method': 'Runtime.evaluate',
-                                 'params': {'expression': expression, 'awaitPromise': True, 'returnByValue': True}}))
+                                 'params': {'expression': expression, 'awaitPromise': True, 'returnByValue': True,
+                                            # как настоящее нажатие: окно выбора файла открывается только по жесту
+                                            'userGesture': True}}))
         while True:
             msg = json.loads(self.ws.recv())
             if msg.get('id') == self.n:
@@ -303,12 +305,175 @@ def full():
     finally:
         adb('shell', 'settings', 'put', 'global', 'always_finish_activities', '0')
 
+    files_flow(raw)
+
     check_logcat()
     if KEEP:
         log('Приложение оставлено с данными для проверки обновления')
     else:
         adb('uninstall', PKG, check=False)
     log('ПОЛНАЯ ПРОВЕРКА ПРОЙДЕНА')
+
+
+DOCS_PKG = r'package="com\.(?:google\.)?android\.documentsui"'
+
+
+def node_bounds(xml, attr_regex):
+    m = re.search(r'<node [^>]*' + attr_regex + r'[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+    if not m:
+        return None
+    x1, y1, x2, y2 = map(int, m.groups())
+    return (x1 + x2) // 2, (y1 + y2) // 2
+
+
+def tap_node(attr_regex, timeout=30, what=None):
+    end = time.time() + timeout
+    while time.time() < end:
+        point = node_bounds(ui_dump(), attr_regex)
+        if point:
+            adb('shell', 'input', 'tap', str(point[0]), str(point[1]))
+            return
+        time.sleep(1.5)
+    shot('not-found')
+    xml = ui_dump()
+    nodes = re.findall(r'<node [^>]*?text="([^"]*)"[^>]*?content-desc="([^"]*)"[^>]*?enabled="(\w+)"[^>]*?selected="(\w+)"', xml)
+    print(f'::error title=Экран ({what})::' + '; '.join(f'{t or d}[{"вкл" if e == "true" else "выкл"}{", отмечен" if sel == "true" else ""}]'
+                                                     for t, d, e, sel in nodes if t or d)[:900], flush=True)
+    raise AssertionError(f'на экране нет: {what or attr_regex}')
+
+
+def pick_in_documents_ui(name_regex):
+    """Системное окно выбора файла: при необходимости сначала выбрать
+    приложение «Файлы» в списке, затем открыть «Загрузки» и нажать на файл."""
+    end = time.time() + 40
+    while time.time() < end:
+        xml = ui_dump()
+        if re.search(DOCS_PKG, xml):
+            break
+        point = node_bounds(xml, r'text="(?:Files|Файлы|Documents)"')
+        if point:
+            adb('shell', 'input', 'tap', str(point[0]), str(point[1]))
+        time.sleep(1.5)
+    else:
+        shot('no-documents-ui')
+        xml = ui_dump()
+        pkgs = sorted(set(re.findall(r'package="([^"]+)"', xml)))
+        texts = [t for t in re.findall(r'(?:text|content-desc)="([^"]+)"', xml) if t][:25]
+        print(f'::error title=Экран при выборе файла::пакеты {pkgs}; тексты {texts}', flush=True)
+        logs = [l for l in adb('logcat', '-d', check=False).splitlines() if 'JarvisMobile' in l or 'ActivityTaskManager: START' in l][-12:]
+        for l in logs:
+            print(f'::error title=Журнал при выборе файла::{l[:400]}', flush=True)
+        raise AssertionError('окно выбора файла не открылось')
+    target = r'text="' + name_regex + r'"'
+    if not node_bounds(ui_dump(), target):
+        tap_node(r'content-desc="(?:Show roots|Показать корневые папки)"', 15, 'меню папок')
+        tap_node(r'text="(?:Downloads|Загрузки)"', 15, 'папка «Загрузки»')
+        time.sleep(2)
+    shot('documents-ui')
+    tap_node(target, 20, f'файл {name_regex}')
+    # При выборе нескольких файлов нажатие только отмечает файл —
+    # затем нужна кнопка «Выбрать» вверху окна.
+    time.sleep(2)
+    xml = ui_dump()
+    if re.search(DOCS_PKG, xml):
+        shot('documents-ui-selected')
+        tap_node(r'(?:text|content-desc)="(?i:select|выбрать|open|открыть)"', 15, 'кнопка «Выбрать»')
+
+
+def files_flow(csv_bytes):
+    """0.4.0 на настоящем Android: прикрепление файла через окно выбора,
+    открытие файла другим приложением, копирование, резервная копия через
+    окно «Сохранить», удаление и восстановление через окно выбора файла."""
+    start_app()
+    page = Page()
+    page.wait('document.documentElement.dataset.ready === "true"', 30, 'запуск')
+    page.js("location.hash = 'dialog'")
+
+    # Прикрепить сохранённый ранее CSV (вид «Excel») через системное окно.
+    page.js("document.querySelector('#attach').click()")
+    page.wait("document.querySelector('#attach-menu').open", 5, 'меню «Прикрепить»')
+    page.js("document.querySelector('#attach-menu button[value=file]').click()")
+    page.close()
+    pick_in_documents_ui(r'jarvis-reestr-[^"]*\.csv')
+    time.sleep(2)
+    page = Page()
+    try:
+        page.wait("document.querySelectorAll('#pending-files .pending-file').length === 1", 20, 'файл выбран')
+    except AssertionError:
+        xml = ui_dump()
+        err = page.js("document.querySelector('#composer-error').textContent")
+        pkgs = sorted(set(re.findall(r'package="([^"]+)"', xml)))
+        texts = [t for t in re.findall(r'text="([^"]+)"', xml) if t][:20]
+        print(f'::error title=Диагностика выбора::ошибка в поле: {err!r}; пакеты {pkgs}; тексты {texts}', flush=True)
+        for l in [l for l in adb('logcat', '-d', check=False).splitlines()
+                  if 'JarvisMobile' in l or 'chromium' in l.lower() or 'ActivityTaskManager: START' in l][-15:]:
+            print(f'::error title=Журнал выбора::{l[:400]}', flush=True)
+        raise
+    shot('attach-pending')
+    page.js("document.querySelector('#input').value = 'Таблица к замечанию'")
+    page.js("document.querySelector('#send').click()")
+    page.wait("document.querySelectorAll('.msg-user .file-chip').length === 1", 10, 'файл в сообщении')
+    size = page.js("""(async () => {
+        const db = await new Promise(r => { const q = indexedDB.open('jarvis-mobile'); q.onsuccess = () => r(q.result); });
+        const items = await new Promise(r => { const q = db.transaction('attachments').objectStore('attachments').getAll(); q.onsuccess = () => r(q.result); });
+        db.close(); return items.map(i => i.blob.size); })()""")
+    assert size == [len(csv_bytes)], f'размер сохранённого файла {size}, ожидалось {len(csv_bytes)}'
+    log('Прикрепление файла через окно Android: OK')
+
+    # Копирование текста — через буфер обмена Android.
+    page.js("document.querySelector('.msg-user .copy-btn').click()")
+    page.wait("(document.querySelector('#toast').textContent || '') === 'Текст скопирован'", 5, 'копирование')
+    log('Копирование текста: OK')
+
+    # Открытие файла другим приложением: появляется системное окно выбора.
+    page.js("document.querySelector('.msg-user .file-chip').click()")
+    wait_ui_text(r'Открыть: jarvis-reestr|Open with|Открыть с помощью|No apps can perform|Нет приложений', 20)
+    shot('open-with')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+    time.sleep(1)
+    log('Открытие файла приложением телефона: OK')
+
+    # Резервная копия через окно «Сохранить».
+    page.js("location.hash = 'settings'")
+    page.js("document.querySelector('#backup-save').click()")
+    tap_save_in_picker()
+    page.wait("(document.querySelector('#toast').textContent || '').includes('Копия сохранена')", 40, 'копия сохранена')
+    backups = [l for l in adb('shell', 'find', '/sdcard/', '-name', "'jarvis-backup-*.zip'", check=False).splitlines() if l.strip()]
+    assert backups, 'файл копии не найден'
+    adb('pull', backups[0].strip(), str(OUT / 'backup.zip'))
+    log(f'Резервная копия: OK ({backups[0].strip()})')
+
+    # Удаление всего и восстановление из копии через окно выбора файла.
+    page.js("document.querySelector('#delete-history').click()")
+    page.wait("document.querySelector('#confirm-delete').open", 5)
+    page.js("document.querySelector('#confirm-delete button[value=delete]').click()")
+    page.wait("document.querySelector('#count-records').textContent === '0'", 10, 'удаление')
+    page.js("document.querySelector('#backup-restore').click()")
+    page.close()
+    pick_in_documents_ui(r'jarvis-backup-[^"]*\.zip')
+    time.sleep(2)
+    page = Page()
+    page.wait("document.querySelector('#confirm-restore').open", 30, 'окно восстановления')
+    shot('restore-confirm')
+    page.js("document.querySelector('#confirm-restore button[value=restore]').click()")
+    try:
+        page.wait("(document.querySelector('#toast').textContent || '').includes('Данные восстановлены')", 30, 'восстановление')
+    except AssertionError:
+        state = page.js("[document.querySelector('#notice').open, document.querySelector('#notice-text').textContent, document.querySelector('#toast').textContent]")
+        print(f'::error title=Восстановление::окно ошибки {state}', flush=True)
+        for l in [l for l in adb('logcat', '-d', check=False).splitlines() if 'JarvisMobile' in l][-10:]:
+            print(f'::error title=Журнал восстановления::{l[:500]}', flush=True)
+        raise
+    page.js("location.hash = 'registry'")
+    page.wait("document.querySelectorAll('.record-row').length === 1", 10, 'запись после восстановления')
+    restored = page.js("""(async () => {
+        const db = await new Promise(r => { const q = indexedDB.open('jarvis-mobile'); q.onsuccess = () => r(q.result); });
+        const items = await new Promise(r => { const q = db.transaction('attachments').objectStore('attachments').getAll(); q.onsuccess = () => r(q.result); });
+        db.close(); return items.map(i => i.blob.size); })()""")
+    assert restored == [len(csv_bytes)], f'файл после восстановления: {restored}'
+    shot('registry-after-restore')
+    page.close()
+    log('Восстановление из копии через окно Android: OK')
 
 
 def killed_by_system():

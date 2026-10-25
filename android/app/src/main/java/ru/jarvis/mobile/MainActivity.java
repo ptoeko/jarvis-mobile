@@ -2,12 +2,18 @@ package ru.jarvis.mobile;
 
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.MediaStore;
+import android.util.Base64;
 import android.util.Log;
 import android.webkit.ConsoleMessage;
+import android.webkit.ValueCallback;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -27,9 +33,18 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 /**
  * Оболочка JARVIS Mobile: показывает веб-приложение, которое лежит внутри APK
@@ -43,6 +58,8 @@ public class MainActivity extends Activity {
     static final String HOST = "appassets.androidplatform.net";
     static final String START_URL = "https://" + HOST + "/index.html";
     private static final int REQUEST_SAVE_FILE = 1001;
+    private static final int REQUEST_CHOOSE_FILE = 1002;
+    private static final Pattern TOKEN = Pattern.compile("[A-Za-z0-9-]{1,80}");
     private static final String STATE_PENDING_SAVE = "jarvis.pendingSave";
     private static final String PENDING_FILE = "pending-export.bin";
 
@@ -53,6 +70,12 @@ public class MainActivity extends Activity {
     // Android может закрыть JARVIS, и без этой копии файл сохранился бы пустым.
     private boolean savePending;
     private String pendingCallbackId;
+
+    // Выбор файла (кнопка «Прикрепить», «Восстановить из копии»).
+    private ValueCallback<Uri[]> chooserCallback;
+    // Снимок и видео камеры: пишутся сюда, если пользователь выбрал камеру.
+    private File cameraFile;
+    private File videoFile;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -86,7 +109,13 @@ public class MainActivity extends Activity {
                         + " (" + m.sourceId() + ":" + m.lineNumber() + ")");
                 return true;
             }
+
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                return showFileChooser(callback, params);
+            }
         });
+        cleanTempFiles();
 
         // Окно «Сохранить» было открыто, когда Android закрыл приложение:
         // результат придёт в onActivityResult, содержимое ждёт в pendingFile().
@@ -172,6 +201,11 @@ public class MainActivity extends Activity {
             reportSave(callbackId, "error", "Не хватает места в памяти телефона для подготовки файла.");
             return;
         }
+        startSaveFromPending(fileName, mimeType, callbackId);
+    }
+
+    // Файл уже лежит в pendingFile(): открыть окно «Сохранить».
+    private void startSaveFromPending(String fileName, String mimeType, String callbackId) {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType(mimeType);
@@ -191,6 +225,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_CHOOSE_FILE) {
+            finishFileChooser(resultCode, data);
+            return;
+        }
         if (requestCode != REQUEST_SAVE_FILE) return;
         // callbackId == null: страница перезапускалась, пока было открыто окно
         // «Сохранить». Файл всё равно записывается, итог — системным сообщением.
@@ -258,6 +296,254 @@ public class MainActivity extends Activity {
             final String type = mimeType == null || mimeType.isEmpty() ? "text/plain" : mimeType;
             runOnUiThread(() -> startSave(fileName, type, content, callbackId));
         }
+
+        /** Часть файла (base64) во временный файл приложения. first — начать заново. */
+        @JavascriptInterface
+        public boolean writeChunk(String token, String base64, boolean first) {
+            File f = stagingFile(token);
+            if (f == null) return false;
+            try (OutputStream out = new FileOutputStream(f, !first)) {
+                if (base64 != null && !base64.isEmpty()) out.write(Base64.decode(base64, Base64.DEFAULT));
+                return true;
+            } catch (Exception e) {
+                Log.e(TAG, "chunk failed", e);
+                f.delete();
+                return false;
+            }
+        }
+
+        /** Сохранить собранный файл через окно «Сохранить». */
+        @JavascriptInterface
+        public void saveChunked(String token, String fileName, String mimeType, String callbackId) {
+            if (fileName == null || callbackId == null) return;
+            final String type = mimeType == null || mimeType.isEmpty() ? "application/octet-stream" : mimeType;
+            runOnUiThread(() -> {
+                File f = stagingFile(token);
+                if (savePending) {
+                    if (f != null) f.delete();
+                    reportSave(callbackId, "error", "Уже открыто окно сохранения файла.");
+                    return;
+                }
+                if (f == null || !f.exists()) {
+                    reportSave(callbackId, "error", "Файл не подготовлен. Повторите.");
+                    return;
+                }
+                pendingFile().delete();
+                if (!f.renameTo(pendingFile())) {
+                    f.delete();
+                    reportSave(callbackId, "error", "Не удалось подготовить файл.");
+                    return;
+                }
+                startSaveFromPending(fileName, type, callbackId);
+            });
+        }
+
+        /** Открыть собранный файл приложением телефона. Возвращает "ok" или текст ошибки. */
+        @JavascriptInterface
+        public String openChunked(String token, String fileName, String mimeType) {
+            File f = stagingFile(token);
+            if (f == null || !f.exists()) return "Файл не подготовлен. Повторите.";
+            File dir = new File(new File(getCacheDir(), FilesProvider.DIR_SHARE), UUID.randomUUID().toString());
+            if (!dir.mkdirs()) return "Не хватает места в памяти телефона.";
+            File target = new File(dir, FilesProvider.safeName(fileName));
+            if (!f.renameTo(target)) return "Не удалось подготовить файл.";
+            Uri uri = FilesProvider.uriFor(FilesProvider.DIR_SHARE, dir.getName() + "/" + target.getName());
+            Intent view = new Intent(Intent.ACTION_VIEW);
+            String type = mimeType == null || mimeType.isEmpty() ? "application/octet-stream" : mimeType;
+            view.setDataAndType(uri, type);
+            view.setClipData(ClipData.newRawUri(target.getName(), uri));
+            view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            AtomicReference<String> result = new AtomicReference<>("Не удалось открыть файл.");
+            CountDownLatch done = new CountDownLatch(1);
+            runOnUiThread(() -> {
+                try {
+                    startActivity(Intent.createChooser(view, "Открыть: " + target.getName())
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+                    result.set("ok");
+                } catch (ActivityNotFoundException e) {
+                    result.set("На телефоне нет приложения для открытия файлов этого типа.");
+                } catch (Exception e) {
+                    Log.e(TAG, "open failed", e);
+                } finally {
+                    done.countDown();
+                }
+            });
+            try {
+                done.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            return result.get();
+        }
+
+        /** Копирование текста в буфер обмена телефона. */
+        @JavascriptInterface
+        public boolean copyText(String text) {
+            if (text == null) return false;
+            runOnUiThread(() -> {
+                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("JARVIS", text));
+            });
+            return true;
+        }
+    }
+
+    // ---------- Временные файлы ----------
+
+    private File stagingFile(String token) {
+        if (token == null || !TOKEN.matcher(token).matches()) return null;
+        File dir = new File(getCacheDir(), "staging");
+        if (!dir.exists() && !dir.mkdirs()) return null;
+        return new File(dir, token + ".bin");
+    }
+
+    // При запуске удаляются старые временные файлы: подготовленные части,
+    // копии для просмотра (старше суток) и неиспользованные снимки камеры.
+    private void cleanTempFiles() {
+        long dayAgo = System.currentTimeMillis() - 24L * 60 * 60 * 1000;
+        deleteTree(new File(getCacheDir(), "staging"), Long.MAX_VALUE);
+        deleteTree(new File(getCacheDir(), FilesProvider.DIR_SHARE), dayAgo);
+        deleteTree(new File(getCacheDir(), FilesProvider.DIR_CAMERA), dayAgo);
+    }
+
+    private static void deleteTree(File f, long olderThan) {
+        if (f == null || !f.exists()) return;
+        File[] children = f.listFiles();
+        if (children != null) for (File c : children) deleteTree(c, olderThan);
+        if (f.isDirectory()) {
+            File[] left = f.listFiles();
+            if (left != null && left.length == 0 && f.lastModified() < olderThan) f.delete();
+        } else if (f.lastModified() < olderThan) {
+            f.delete();
+        }
+    }
+
+    // ---------- Выбор файла и камера ----------
+
+    // Три случая, их различает страница:
+    //  «Снять фото»  — accept=image/*, capture  → сразу приложение камеры;
+    //  «Снять видео» — accept=video/*, capture  → сразу камера в режиме видео;
+    //  «Выбрать файл», «Восстановить из копии» → системный файловый менеджер
+    //  (ACTION_OPEN_DOCUMENT), где видны все папки, «Загрузки», Диск и т. п.
+    // Общее окно «камера или файлы» не используется: на части телефонов в нём
+    // нет пункта «Файлы», и выбрать PDF или Word было бы нельзя.
+    private boolean showFileChooser(ValueCallback<Uri[]> callback, WebChromeClient.FileChooserParams params) {
+        if (chooserCallback != null) chooserCallback.onReceiveValue(null);
+        chooserCallback = callback;
+        cameraFile = null;
+        videoFile = null;
+
+        String[] accept = params.getAcceptTypes();
+        boolean images = false, videos = false, attach = false;
+        for (String t : accept) {
+            if (t == null) continue;
+            if (t.startsWith("image/")) images = true;
+            if (t.startsWith("video/")) videos = true;
+            if (t.startsWith(".pdf") || t.startsWith(".doc") || t.startsWith(".xls")) attach = true;
+        }
+        Log.i(TAG, "file chooser requested, capture=" + params.isCaptureEnabled() + " accept=" + java.util.Arrays.toString(accept));
+
+        Intent intent;
+        if (params.isCaptureEnabled() && (images || videos) && !attach) {
+            intent = videos && !images ? videoIntent() : cameraIntent();
+            if (intent == null) {
+                chooserCallback = null;
+                Toast.makeText(this, "На телефоне нет приложения камеры.", Toast.LENGTH_LONG).show();
+                return false;
+            }
+        } else {
+            intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            // Без фильтра по типу: телефоны по-разному называют типы файлов
+            // (CSV, DOCX, XLSX), и фильтр мог сделать нужный файл недоступным.
+            // Неподходящий файл приложение отклонит с понятным сообщением.
+            if (params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            }
+        }
+        try {
+            startActivityForResult(intent, REQUEST_CHOOSE_FILE);
+            return true;
+        } catch (ActivityNotFoundException e) {
+            chooserCallback = null;
+            cameraFile = null;
+            videoFile = null;
+            Toast.makeText(this, "На телефоне нет приложения для выбора файлов.", Toast.LENGTH_LONG).show();
+            return false;
+        }
+    }
+
+    // Съёмка фото камерой телефона. Снимок пишется во внутреннюю папку
+    // приложения (не в галерею); разрешение на камеру приложению не нужно.
+    private Intent cameraIntent() {
+        Intent capture = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        if (capture.resolveActivity(getPackageManager()) == null) return null;
+        File dir = new File(getCacheDir(), FilesProvider.DIR_CAMERA);
+        if (!dir.exists() && !dir.mkdirs()) return null;
+        String name = "photo-" + new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new Date()) + ".jpg";
+        cameraFile = new File(dir, name);
+        Uri uri = FilesProvider.uriFor(FilesProvider.DIR_CAMERA, name);
+        capture.putExtra(MediaStore.EXTRA_OUTPUT, uri);
+        capture.setClipData(ClipData.newRawUri(name, uri));
+        capture.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        return capture;
+    }
+
+    // Видео камерой телефона — так же во внутреннюю папку приложения.
+    private Intent videoIntent() {
+        Intent capture = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+        if (capture.resolveActivity(getPackageManager()) == null) return null;
+        File dir = new File(getCacheDir(), FilesProvider.DIR_CAMERA);
+        if (!dir.exists() && !dir.mkdirs()) return null;
+        String name = "video-" + new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new Date()) + ".mp4";
+        videoFile = new File(dir, name);
+        Uri uri = FilesProvider.uriFor(FilesProvider.DIR_CAMERA, name);
+        capture.putExtra(MediaStore.EXTRA_OUTPUT, uri);
+        // Ограничение размера, совпадающее с лимитом приложения (300 МБ).
+        capture.putExtra(MediaStore.EXTRA_SIZE_LIMIT, 300L * 1024 * 1024);
+        capture.setClipData(ClipData.newRawUri(name, uri));
+        capture.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        return capture;
+    }
+
+    private void finishFileChooser(int resultCode, Intent data) {
+        ValueCallback<Uri[]> callback = chooserCallback;
+        File photo = cameraFile;
+        File video = videoFile;
+        chooserCallback = null;
+        cameraFile = null;
+        videoFile = null;
+        // Снимали видео — дальше оно обрабатывается так же, как снимок.
+        if (video != null && video.length() > 0 && (photo == null || photo.length() == 0)) {
+            if (photo != null) photo.delete();
+            photo = video;
+        } else if (video != null && video.length() == 0) {
+            video.delete();
+        }
+        if (callback == null) return; // страница перезапускалась — выбор не к чему применить
+        List<Uri> uris = new ArrayList<>();
+        if (resultCode == RESULT_OK && data != null) {
+            ClipData clip = data.getClipData();
+            if (clip != null) {
+                for (int i = 0; i < clip.getItemCount(); i++) {
+                    Uri u = clip.getItemAt(i).getUri();
+                    if (u != null && !"content".equals(u.getScheme()) && !"file".equals(u.getScheme())) continue;
+                    if (u != null) uris.add(u);
+                }
+            }
+            if (uris.isEmpty() && data.getData() != null) uris.add(data.getData());
+        }
+        // Камера возвращает пустой результат: снимок уже в cameraFile.
+        if (resultCode == RESULT_OK && photo != null && photo.length() > 0
+                && (uris.isEmpty() || uris.contains(FilesProvider.uriFor(FilesProvider.DIR_CAMERA, photo.getName())))) {
+            uris.clear();
+            uris.add(FilesProvider.uriFor(FilesProvider.DIR_CAMERA, photo.getName()));
+        } else if (photo != null && photo.length() == 0) {
+            photo.delete();
+        }
+        Log.i(TAG, "file chooser result=" + resultCode + " uris=" + uris);
+        callback.onReceiveValue(uris.isEmpty() ? null : uris.toArray(new Uri[0]));
     }
 
     // ---------- Файлы приложения из APK ----------

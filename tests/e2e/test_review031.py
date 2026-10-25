@@ -153,7 +153,7 @@ def upgrade_from_030(browser, device):
             const db = await new Promise(r => { const q = indexedDB.open('jarvis-mobile'); q.onsuccess = () => r(q.result); });
             const v = { version: db.version, stores: [...db.objectStoreNames] };
             db.close(); return v; }''')
-        assert info == {'version': 1, 'stores': ['messages', 'meta', 'records']}, info
+        assert info == {'version': 2, 'stores': ['attachments', 'messages', 'meta', 'records']}, info
         assert not errors, errors
     finally:
         ctx.close()

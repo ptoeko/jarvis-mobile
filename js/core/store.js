@@ -3,13 +3,15 @@
 // Адаптер обязан реализовать: getAll(store), get(store, id), put(store, item),
 // delete(store, id), clear(store), getMeta(key), setMeta(key, value).
 //
-// Схема базы не менялась с этапа 1 (версия 1): хранилища messages, records, meta
-// с ключом id. Записи реестра впервые пишутся на этапе 2.
+// Схема базы: версия 1 (этапы 1–2) — хранилища messages, records, meta;
+// версия 2 (0.4.0) — добавлено хранилище attachments (файлы вложений).
+// Ключ во всех хранилищах — id. Старые данные при обновлении не меняются.
 
 import { EDITABLE_FIELDS } from './config.js';
 import { validateFields, restoreDraft } from './records.js';
+import { attachmentRefs, cleanFileName, mimeOf, checkFiles } from './attachments.js';
 
-export const STORES = ['messages', 'records', 'meta'];
+export const STORES = ['messages', 'records', 'meta', 'attachments'];
 export const META_NEXT_NUMBER = 'nextRecordNumber';
 // Черновики на проверке. Хранятся в базе, чтобы не пропасть, если Android
 // закроет приложение в фоне (например, при переключении на камеру).
@@ -24,7 +26,7 @@ export function createId() {
 }
 
 export function createMemoryAdapter() {
-  const data = { messages: new Map(), records: new Map(), meta: new Map() };
+  const data = { messages: new Map(), records: new Map(), meta: new Map(), attachments: new Map() };
   return {
     kind: 'memory',
     async getAll(store) {
@@ -33,6 +35,9 @@ export function createMemoryAdapter() {
     async get(store, id) {
       const item = data[store].get(id);
       return item ? structuredClone(item) : undefined;
+    },
+    async keys(store) {
+      return [...data[store].keys()];
     },
     async put(store, item) {
       data[store].set(item.id, structuredClone(item));
@@ -64,8 +69,8 @@ export function createMemoryAdapter() {
   };
 }
 
-const ROLES = new Set(['user', 'assistant']);
-const SOURCES = new Set(['user', 'demo', 'ai', 'system']);
+export const ROLES = new Set(['user', 'assistant']);
+export const SOURCES = new Set(['user', 'demo', 'ai', 'system']);
 
 export class RecordError extends Error {
   constructor(message, fieldErrors = {}) {
@@ -100,13 +105,36 @@ export function createStore(adapter, now = () => new Date()) {
     return run;
   }
 
-  async function addMessage({ role, source, text }) {
+  // Сообщение и его файлы сохраняются одной транзакцией: не бывает
+  // сообщения со ссылкой на несохранённый файл и файла без сообщения.
+  async function addMessage({ role, source, text, files = [] }) {
     if (!ROLES.has(role)) throw new Error(`Неизвестная роль сообщения: ${role}`);
     if (!SOURCES.has(source)) throw new Error(`Неизвестный источник сообщения: ${source}`);
-    if (typeof text !== 'string' || text.length === 0) throw new Error('Пустое сообщение не сохраняется.');
-    const message = { id: createId(), role, source, text, createdAt: stamp() };
-    await adapter.put('messages', message);
+    if (typeof text !== 'string') throw new Error('Сообщение должно быть текстом.');
+    const list = [...(files || [])];
+    if (text.length === 0 && list.length === 0) throw new Error('Пустое сообщение не сохраняется.');
+    if (list.length) {
+      const checked = checkFiles(list);
+      if (!checked.ok) throw new Error(checked.error);
+    }
+    const id = createId();
+    const createdAt = stamp();
+    const items = list.map((f) => {
+      const name = cleanFileName(f.name);
+      return { id: createId(), name, type: mimeOf(name, f.type), size: f.size, blob: f, messageId: id, createdAt };
+    });
+    const message = { id, role, source, text, createdAt };
+    if (items.length) message.attachments = attachmentRefs(items);
+    await adapter.commit([
+      ...items.map((item) => ({ type: 'put', store: 'attachments', item })),
+      { type: 'put', store: 'messages', item: message },
+    ]);
     return message;
+  }
+
+  // Файл вложения: { id, name, type, size, blob } или undefined.
+  async function getAttachment(id) {
+    return adapter.get('attachments', id);
   }
 
   async function listMessages() {
@@ -142,6 +170,7 @@ export function createStore(adapter, now = () => new Date()) {
         ...checked.value,
         sourceText: draft.sourceText,
         sourceMessageId: draft.sourceMessageId ?? null,
+        attachments: attachmentRefs(draft.attachments),
         createdAt: time,
         updatedAt: time,
       };
@@ -191,6 +220,7 @@ export function createStore(adapter, now = () => new Date()) {
       await adapter.commit([
         { type: 'clear', store: 'messages' },
         { type: 'clear', store: 'records' },
+        { type: 'clear', store: 'attachments' },
         { type: 'put', store: 'meta', item: { id: META_NEXT_NUMBER, value: 1 } },
         { type: 'put', store: 'meta', item: { id: META_DRAFTS, value: [] } },
       ]);
@@ -214,9 +244,61 @@ export function createStore(adapter, now = () => new Date()) {
     return serial(() => adapter.setMeta(META_DRAFTS, value.filter((d) => !confirmedDrafts.has(d.draftId))));
   }
 
+  // Счётчики без чтения самих файлов: размеры берутся из описаний в сообщениях.
   async function counts() {
     const [messages, records] = await Promise.all([adapter.getAll('messages'), adapter.getAll('records')]);
-    return { messages: messages.length, records: records.length };
+    const refs = messages.flatMap((m) => attachmentRefs(m.attachments));
+    return {
+      messages: messages.length,
+      records: records.length,
+      attachments: refs.length,
+      attachmentsSize: refs.reduce((sum, r) => sum + r.size, 0),
+    };
+  }
+
+  // Всё, кроме файлов вложений, — для резервной копии. Файлы читаются по одному
+  // (getAttachment), чтобы не держать их все в памяти телефона.
+  function snapshot() {
+    return serial(async () => {
+      const [messages, records, meta] = await Promise.all([
+        adapter.getAll('messages'), adapter.getAll('records'), adapter.getAll('meta'),
+      ]);
+      return { messages: messages.sort(byTime), records: records.sort((a, b) => a.number - b.number), meta };
+    });
+  }
+
+  // Файлы вложений по одному (восстановление из копии: сначала файлы,
+  // затем одна транзакция с остальными данными).
+  async function attachmentIds() {
+    return adapter.keys('attachments');
+  }
+
+  function putAttachment(item) {
+    return serial(() => adapter.put('attachments', item));
+  }
+
+  function deleteAttachments(ids) {
+    return serial(() => adapter.commit(ids.map((id) => ({ type: 'delete', store: 'attachments', id }))));
+  }
+
+  // Полная замена данных одной транзакцией: сообщения, записи и служебные
+  // данные заменяются, файлы — остаются только перечисленные в keepAttachmentIds
+  // (они уже записаны). При сбое на телефоне остаются прежние данные целиком.
+  function replaceAll({ messages, records, meta, keepAttachmentIds }) {
+    return serial(async () => {
+      const keep = new Set(keepAttachmentIds);
+      const stale = (await adapter.keys('attachments')).filter((id) => !keep.has(id));
+      await adapter.commit([
+        { type: 'clear', store: 'messages' },
+        { type: 'clear', store: 'records' },
+        { type: 'clear', store: 'meta' },
+        ...stale.map((id) => ({ type: 'delete', store: 'attachments', id })),
+        ...messages.map((item) => ({ type: 'put', store: 'messages', item })),
+        ...records.map((item) => ({ type: 'put', store: 'records', item })),
+        ...meta.map((item) => ({ type: 'put', store: 'meta', item })),
+      ]);
+      confirmedDrafts.clear();
+    });
   }
 
   return {
@@ -231,6 +313,12 @@ export function createStore(adapter, now = () => new Date()) {
     loadDrafts,
     saveDrafts,
     counts,
+    getAttachment,
+    snapshot,
+    replaceAll,
+    attachmentIds,
+    putAttachment,
+    deleteAttachments,
     getMeta: (key) => adapter.getMeta(key),
     setMeta: (key, value) => adapter.setMeta(key, value),
   };

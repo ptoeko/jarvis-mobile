@@ -1,5 +1,6 @@
 // Черновики и проверка полей записи реестра.
 import { NOT_SPECIFIED, MAX_FIELD_LENGTH, EDITABLE_FIELDS, REGISTRY_FIELDS } from './config.js';
+import { attachmentRefs } from './attachments.js';
 
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const TITLES = Object.fromEntries(REGISTRY_FIELDS.map((f) => [f.key, f.title]));
@@ -43,8 +44,8 @@ function newDraftId() {
 }
 
 // Черновик: ждёт проверки человеком; в реестр попадает только после подтверждения.
-export function createDraft({ fields, sourceText, sourceMessageId = null }) {
-  const draft = { draftId: newDraftId(), sourceText, sourceMessageId };
+export function createDraft({ fields, sourceText, sourceMessageId = null, attachments = [] }) {
+  const draft = { draftId: newDraftId(), sourceText, sourceMessageId, attachments: attachmentRefs(attachments) };
   for (const key of EDITABLE_FIELDS) draft[key] = normalizeFieldValue(fields?.[key]);
   return draft;
 }
@@ -60,6 +61,7 @@ export function restoreDraft(raw) {
     draftId: raw.draftId,
     sourceText: raw.sourceText,
     sourceMessageId: typeof raw.sourceMessageId === 'string' ? raw.sourceMessageId : null,
+    attachments: attachmentRefs(raw.attachments),
   };
   for (const key of EDITABLE_FIELDS) {
     const v = raw[key];
