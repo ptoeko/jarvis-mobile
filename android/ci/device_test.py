@@ -456,7 +456,14 @@ def files_flow(csv_bytes):
     page.wait("document.querySelector('#confirm-restore').open", 30, 'окно восстановления')
     shot('restore-confirm')
     page.js("document.querySelector('#confirm-restore button[value=restore]').click()")
-    page.wait("(document.querySelector('#toast').textContent || '').includes('Данные восстановлены')", 30, 'восстановление')
+    try:
+        page.wait("(document.querySelector('#toast').textContent || '').includes('Данные восстановлены')", 30, 'восстановление')
+    except AssertionError:
+        state = page.js("[document.querySelector('#notice').open, document.querySelector('#notice-text').textContent, document.querySelector('#toast').textContent]")
+        print(f'::error title=Восстановление::окно ошибки {state}', flush=True)
+        for l in [l for l in adb('logcat', '-d', check=False).splitlines() if 'JarvisMobile' in l][-10:]:
+            print(f'::error title=Журнал восстановления::{l[:500]}', flush=True)
+        raise
     page.js("location.hash = 'registry'")
     page.wait("document.querySelectorAll('.record-row').length === 1", 10, 'запись после восстановления')
     restored = page.js("""(async () => {

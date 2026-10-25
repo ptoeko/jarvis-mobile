@@ -780,7 +780,7 @@ async function handleRestoreChosen(event) {
     await Promise.all([renderMessages(), renderSettings(), renderRegistry()]);
     toast(`Данные восстановлены: записей ${s.records}, файлов ${s.attachments}`);
   } catch (e) {
-    if (!(e instanceof BackupError)) console.error(e);
+    if (!(e instanceof BackupError)) console.error('restore failed:', e?.name, e?.message, e);
     backupBusy = false; // можно сразу выбрать другой файл
     await notice('Восстановление не выполнено',
       e instanceof BackupError
