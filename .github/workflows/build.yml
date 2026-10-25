@@ -195,9 +195,10 @@ jobs:
   pages:
     name: Публикация веб-версии
     needs: web-tests
-    if: github.ref == 'refs/heads/main'
-    # Веб-версия — запасной вариант. Если GitHub Pages не включён в настройках
-    # репозитория, это не должно помечать сборку APK как неудачную.
+    # Веб-версия — запасной вариант. Публикуется, только если в настройках
+    # репозитория включён GitHub Pages (Source: GitHub Actions) и задана
+    # переменная ENABLE_PAGES = true (Settings → Secrets and variables → Variables).
+    if: github.ref == 'refs/heads/main' && vars.ENABLE_PAGES == 'true'
     continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
