@@ -91,7 +91,9 @@ def tap_text(text, timeout=30):
 
 
 def exported_files():
-    return sorted(adb('shell', 'find', '/sdcard/', '-name', 'jarvis-reestr-*.csv', check=False).split())
+    # По строкам: второе сохранение получает имя с пробелом «… (1).csv».
+    out = adb('shell', 'find', '/sdcard/', '-name', "'jarvis-reestr-*.csv'", check=False)
+    return sorted(l.strip() for l in out.splitlines() if l.strip())
 
 
 def start_app():
@@ -267,7 +269,9 @@ def full():
         assert len(files) >= 2, f'второй файл не сохранён: {files}'
         time.sleep(2)
         for i, f in enumerate(files):
-            adb('pull', f, str(OUT / f'exported-{i}.csv'))
+            # Путь в кавычках для оболочки телефона: в имени есть пробел и скобки.
+            data_text = adb('exec-out', 'cat', f"'{f}'", text=False)
+            (OUT / f'exported-{i}.csv').write_bytes(data_text)
             data = (OUT / f'exported-{i}.csv').read_bytes()
             assert data == raw, f'{f}: содержимое отличается ({len(data)} байт вместо {len(raw)})'
         shot('saved-after-activity-restart')
