@@ -5,6 +5,18 @@
          собственным файлам внутри APK; все внешние адреса блокируются. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Android 11+: приложение должно объявить, что ищет камеру, иначе
+         кнопка «Прикрепить» не предложит снять фото. Разрешение на камеру
+         не нужно: снимает приложение камеры. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.VIDEO_CAPTURE" />
+        </intent>
+    </queries>
+
     <!-- allowBackup=false: рабочие заметки не копируются в облачную резервную
          копию Google без ведома пользователя. -->
     <application
@@ -28,5 +40,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Доступ к отдельным временным файлам: просмотр вложения, снимок камеры. -->
+        <provider
+            android:name=".FilesProvider"
+            android:authorities="ru.jarvis.mobile.files"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

@@ -88,9 +88,9 @@ test('удаление истории очищает сообщения и за�
   await store.addMessage({ role: 'user', source: 'user', text: 'заметка' });
   await adapter.put('records', { id: 'r1', ...emptyRecord() });
   await store.setMeta('lastScreen', 'status');
-  assert.deepEqual(await store.counts(), { messages: 1, records: 1 });
+  assert.deepEqual(await store.counts(), { messages: 1, records: 1, attachments: 0, attachmentsSize: 0 });
   await store.clearHistory();
-  assert.deepEqual(await store.counts(), { messages: 0, records: 0 });
+  assert.deepEqual(await store.counts(), { messages: 0, records: 0, attachments: 0, attachmentsSize: 0 });
   assert.equal(await store.getMeta('lastScreen'), 'status');
 });
 

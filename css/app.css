@@ -395,3 +395,82 @@ button:disabled { opacity: 0.5; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .core.busy .core-arc { animation: none; }
 }
+
+/* ---------- 0.4.0: вложения, копирование, резервная копия ---------- */
+.msg-text { -webkit-user-select: text; user-select: text; }
+.msg-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.msg-user .msg-meta { justify-content: flex-end; }
+.copy-btn {
+  min-height: 32px;
+  min-width: 44px;
+  padding: 0 10px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+.copy-btn:active { background: var(--panel-2); }
+.copy-btn svg { width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linejoin: round; }
+
+.icon-btn {
+  min-height: var(--tap);
+  min-width: var(--tap);
+  margin-right: auto;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: transparent;
+  cursor: pointer;
+}
+.icon-btn svg { width: 24px; height: 24px; fill: none; stroke: var(--text); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.msg .file-list { margin-top: 6px; }
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--tap);
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--panel);
+  text-align: left;
+  cursor: pointer;
+}
+.file-chip .thumb, .file-chip .kind {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+  object-fit: cover;
+  display: grid;
+  place-items: center;
+  background: var(--panel-2);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.file-chip .file-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.file-chip .file-name { overflow-wrap: anywhere; font-size: 0.9375rem; }
+.file-chip .file-size { color: var(--muted); font-size: 0.8125rem; }
+.file-remove {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: none;
+  background: transparent;
+  color: var(--danger);
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+.attachments-title { margin: 8px 0 4px; font-size: 0.8125rem; color: var(--muted); }
+
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.row-actions button { flex: 1 1 160px; }

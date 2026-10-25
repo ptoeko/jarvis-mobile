@@ -10,7 +10,9 @@ import { computeFeatures, statusSummary, STATE_LABELS } from './core/status.js';
 import { parseMessage } from './core/parse.js';
 import { createDraft } from './core/records.js';
 import { recordsToCsv, exportFileName } from './core/csv.js';
-import { detectPlatform, installSaveCallback, saveViaBridge } from './core/platform.js';
+import { detectPlatform, installSaveCallback, saveViaBridge, saveBlobViaBridge, openBlobViaBridge, copyText } from './core/platform.js';
+import { ACCEPT, checkFiles, formatSize, kindLabel, attachmentRefs } from './core/attachments.js';
+import { createBackup, inspectBackup, restoreBackup, backupFileName, BackupError, META_LAST_BACKUP } from './core/backup.js';
 
 const SCREENS = ['dialog', 'registry', 'settings', 'status'];
 const FIELD = Object.fromEntries(REGISTRY_FIELDS.map((f) => [f.key, f]));
@@ -169,23 +171,149 @@ function goTo(name) {
   else location.hash = name;
 }
 
+// ---------- Вложения ----------
+// Ссылки на миниатюры фото (object URL) освобождаются при перерисовке.
+const thumbUrls = new Set();
+function releaseThumbs() {
+  for (const url of thumbUrls) URL.revokeObjectURL(url);
+  thumbUrls.clear();
+}
+
+function kindBadge(ref) {
+  return el('span', { className: 'kind', 'aria-hidden': 'true' }, ref.kind === 'photo' ? 'ФОТО' : kindLabel(ref.kind).toUpperCase());
+}
+
+// Кнопка-вложение: миниатюра (для фото) или вид файла, имя и размер.
+// Нажатие открывает файл приложением телефона.
+function attachmentButton(ref) {
+  const badge = kindBadge(ref);
+  const button = el('button', { type: 'button', className: 'file-chip', dataset: { attachment: ref.id } },
+    badge,
+    el('span', { className: 'file-info' },
+      el('span', { className: 'file-name' }, ref.name),
+      el('span', { className: 'file-size' }, `${ref.kind === 'photo' ? 'Фото' : kindLabel(ref.kind)}, ${formatSize(ref.size)}`)));
+  button.setAttribute('aria-label', `Открыть файл ${ref.name}`);
+  button.addEventListener('click', () => openAttachment(ref));
+  if (ref.kind === 'photo') {
+    store.getAttachment(ref.id).then((item) => {
+      if (!item?.blob) return;
+      const url = URL.createObjectURL(item.blob);
+      thumbUrls.add(url);
+      const img = el('img', { className: 'thumb', src: url, alt: '' });
+      img.addEventListener('error', () => img.replaceWith(kindBadge(ref)), { once: true });
+      badge.replaceWith(img);
+    }).catch(() => {});
+  }
+  return button;
+}
+
+function attachmentList(refs) {
+  const list = el('ul', { className: 'file-list' });
+  list.append(...refs.map((ref) => el('li', {}, attachmentButton(ref))));
+  return list;
+}
+
+let opening = false;
+async function openAttachment(ref) {
+  if (opening) return;
+  opening = true;
+  try {
+    const item = await store.getAttachment(ref.id);
+    if (!item?.blob) {
+      toast('Файл не найден на телефоне.');
+      return;
+    }
+    if (platform.kind === 'apk') {
+      if (item.blob.size > 10 * 1024 * 1024) toast('Готовлю файл к открытию…');
+      const result = await openBlobViaBridge(platform.bridge, item.blob, item.name, item.type);
+      if (result.status !== 'opened') toast(result.message);
+      return;
+    }
+    // Браузер: фото, PDF и видео открываются во вкладке, остальное скачивается.
+    const url = URL.createObjectURL(new Blob([item.blob], { type: item.type }));
+    const opened = window.open(url, '_blank');
+    if (opened) opened.opener = null;
+    else downloadUrl(url, item.name);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) {
+    console.error(e);
+    toast('Не удалось открыть файл.');
+  } finally {
+    opening = false;
+  }
+}
+
+// Файлы, выбранные для следующего сообщения.
+let pendingFiles = [];
+
+function renderPendingFiles() {
+  const list = $('pending-files');
+  list.hidden = pendingFiles.length === 0;
+  list.replaceChildren(...pendingFiles.map((file, i) => {
+    const remove = el('button', { type: 'button', className: 'file-remove' }, '×');
+    remove.setAttribute('aria-label', `Убрать файл ${file.name}`);
+    remove.addEventListener('click', () => {
+      pendingFiles = pendingFiles.filter((_, j) => j !== i);
+      renderPendingFiles();
+    });
+    const ref = attachmentRefs([{ id: `p${i}`, name: file.name, type: file.type, size: file.size }])[0];
+    return el('li', { className: 'file-chip pending-file' },
+      kindBadge(ref),
+      el('span', { className: 'file-info' },
+        el('span', { className: 'file-name' }, ref.name),
+        el('span', { className: 'file-size' }, formatSize(file.size))),
+      remove);
+  }));
+}
+
+function handleFilesChosen(event) {
+  const input = event.target;
+  const files = [...(input.files || [])];
+  input.value = '';
+  if (files.length === 0) return;
+  const checked = checkFiles(files, pendingFiles.length);
+  if (!checked.ok) {
+    setComposerError(checked.error);
+    return;
+  }
+  setComposerError('');
+  pendingFiles.push(...checked.files);
+  renderPendingFiles();
+}
+
 // ---------- Диалог ----------
 function messageElement(message) {
   const meta = el('div', { className: 'msg-meta' });
+  const who = el('span', {});
   if (message.role === 'assistant') {
     meta.append(el('span', { className: 'badge' }, message.source === 'ai' ? 'ИИ' : 'Демо'));
-    meta.append(message.source === 'ai' ? 'Ответ ИИ' : 'Демо-ответ, не ИИ');
+    who.append(message.source === 'ai' ? 'Ответ ИИ' : 'Демо-ответ, не ИИ');
   } else {
-    meta.append('Вы');
+    who.append('Вы');
   }
   const time = formatTime(message.createdAt);
-  if (time) meta.append(`, ${time}`);
-  return el('li', { className: `msg msg-${message.role}`, dataset: { source: message.source } },
-    meta, el('div', { className: 'msg-text' }, message.text));
+  if (time) who.append(`, ${time}`);
+  meta.append(who);
+  if (message.text) {
+    const copy = el('button', { type: 'button', className: 'copy-btn', title: 'Копировать текст' });
+    copy.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
+    copy.setAttribute('aria-label', 'Копировать текст сообщения');
+    copy.addEventListener('click', async () => {
+      const ok = await copyText(window, message.text);
+      toast(ok ? 'Текст скопирован' : 'Не удалось скопировать. Выделите текст долгим нажатием.');
+    });
+    meta.append(copy);
+  }
+  const item = el('li', { className: `msg msg-${message.role}`, dataset: { source: message.source, id: message.id } }, meta);
+  if (message.text) item.append(el('div', { className: 'msg-text' }, message.text));
+  const refs = attachmentRefs(message.attachments);
+  if (refs.length) item.append(attachmentList(refs));
+  return item;
 }
 
 async function renderMessages() {
   const messages = await store.listMessages();
+  releaseThumbs();
   $('messages').replaceChildren(...messages.map(messageElement));
   $('messages-empty').hidden = messages.length > 0;
   $('main').scrollTop = $('main').scrollHeight;
@@ -207,13 +335,16 @@ function autosize() {
 function setComposerBusy(busy) {
   $('send').disabled = busy;
   $('parse').disabled = busy;
+  $('attach').disabled = busy;
 }
 
 let sending = false;
 async function withComposer(action) {
   if (sending) return;
   const input = $('input');
-  const checked = validateMessage(input.value);
+  // Сообщение может состоять только из файлов, без текста.
+  const onlyFiles = pendingFiles.length > 0 && input.value.trim() === '';
+  const checked = onlyFiles ? { ok: true, value: '' } : validateMessage(input.value);
   if (!checked.ok) {
     setComposerError(checked.error);
     return;
@@ -231,6 +362,8 @@ async function withComposer(action) {
 
 function clearComposer() {
   $('input').value = '';
+  pendingFiles = [];
+  renderPendingFiles();
   autosize();
 }
 
@@ -238,9 +371,12 @@ async function handleSubmit(event) {
   event.preventDefault();
   await withComposer(async (text) => {
     try {
-      await store.addMessage({ role: 'user', source: 'user', text });
+      await store.addMessage({ role: 'user', source: 'user', text, files: pendingFiles });
+      const withFiles = pendingFiles.length;
       clearComposer();
-      const reply = demoReply(text, statusSummary(computeFeatures(env)));
+      const reply = text
+        ? demoReply(text, statusSummary(computeFeatures(env)))
+        : { source: 'demo', text: `Файлов сохранено: ${withFiles}. ИИ не подключён, поэтому содержимое файлов не анализируется. Чтобы приложить файлы к замечанию, напишите заметку и нажмите «В реестр».` };
       await store.addMessage({ role: 'assistant', source: reply.source, text: reply.text });
       pulseCore();
       await renderMessages();
@@ -254,15 +390,20 @@ async function handleSubmit(event) {
 // «В реестр»: заметка сохраняется в диалоге, по ней создаются черновики.
 async function handleParse() {
   await withComposer(async (text) => {
+    if (!text) {
+      setComposerError('Напишите текст заметки: по нему заполняется запись реестра. Файлы будут приложены к записи.');
+      return;
+    }
     const parsed = parseMessage(text);
     if (!parsed.ok) {
       setComposerError(parsed.error);
       return;
     }
     try {
-      const message = await store.addMessage({ role: 'user', source: 'user', text });
+      const message = await store.addMessage({ role: 'user', source: 'user', text, files: pendingFiles });
       clearComposer();
-      const created = parsed.notes.map((n) => createDraft({ fields: n.fields, sourceText: n.note, sourceMessageId: message.id }));
+      // Файлы заметки прикладываются к каждому черновику из этого сообщения.
+      const created = parsed.notes.map((n) => createDraft({ fields: n.fields, sourceText: n.note, sourceMessageId: message.id, attachments: message.attachments }));
       drafts.push(...created);
       await persistDrafts();
       const reply = draftsReply(created.length);
@@ -337,9 +478,11 @@ function renderDrafts() {
     const error = el('p', { className: 'form-error', role: 'alert', hidden: true });
     const reject = el('button', { type: 'button', className: 'secondary' }, 'Отклонить');
     const accept = el('button', { type: 'button', className: 'send' }, 'Добавить в реестр');
+    const refs = attachmentRefs(draft.attachments);
     const card = el('li', { className: 'draft', dataset: { draft: draft.draftId } },
       el('h4', {}, `Черновик ${i + 1} из ${drafts.length}`),
       sourceBlock(draft.sourceText),
+      ...(refs.length ? [el('p', { className: 'attachments-title' }, `Файлы (${refs.length})`), attachmentList(refs)] : []),
       fields,
       error,
       el('div', { className: 'draft-actions' }, reject, accept));
@@ -429,7 +572,11 @@ async function openRecord(id) {
   }
   openRecordId = id;
   $('record-title').textContent = `Запись № ${record.number}`;
-  $('record-fields').replaceChildren(sourceBlock(record.sourceText), fieldInputs(record, 'edit'));
+  const refs = attachmentRefs(record.attachments);
+  $('record-fields').replaceChildren(
+    sourceBlock(record.sourceText),
+    ...(refs.length ? [el('p', { className: 'attachments-title' }, `Файлы (${refs.length})`), attachmentList(refs)] : []),
+    fieldInputs(record, 'edit'));
   $('record-error').hidden = true;
   $('record-dialog').showModal();
 }
@@ -472,13 +619,27 @@ async function deleteOpenRecord() {
 }
 
 // ---------- Экспорт ----------
-function downloadText(text, filename, type) {
-  const url = URL.createObjectURL(new Blob([text], { type }));
+function downloadUrl(url, filename) {
   const link = el('a', { href: url, download: filename, hidden: true });
   document.body.append(link);
   link.click();
   link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  downloadUrl(url, filename);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function downloadText(text, filename, type) {
+  downloadBlob(new Blob([text], { type }), filename);
+}
+
+function notice(title, text) {
+  $('notice-title').textContent = title;
+  $('notice-text').textContent = text;
+  return ask($('notice'));
 }
 
 async function handleExport() {
@@ -520,7 +681,16 @@ async function renderSettings() {
   const counts = await store.counts();
   $('count-messages').textContent = String(counts.messages);
   $('count-records').textContent = String(counts.records);
-  $('storage-kind').textContent = env.storage === 'indexeddb' ? 'В браузере телефона' : 'Только в памяти (не сохраняется)';
+  $('count-attachments').textContent = counts.attachments ? `${counts.attachments} (${formatSize(counts.attachmentsSize)})` : '0';
+  const apk = platform.kind === 'apk';
+  $('storage-kind').textContent = env.storage !== 'indexeddb'
+    ? 'Только в памяти (не сохраняется)'
+    : apk ? 'В памяти приложения' : 'В браузере телефона';
+  $('storage-note').textContent = apk
+    ? 'Данные никуда не отправляются. Они хранятся во внутренней памяти приложения на этом телефоне.'
+    : 'Данные никуда не отправляются. Они хранятся только в браузере этого телефона.';
+  const last = await store.getMeta(META_LAST_BACKUP);
+  $('last-backup').textContent = last ? formatTime(last) : 'Не создавалась';
   $('app-version').textContent = APP_VERSION;
   $('app-platform').textContent = platform.kind === 'apk' ? 'Приложение Android (APK)' : 'Веб-приложение';
   $('app-stage').textContent = `Этап ${APP_STAGE} из 5`;
@@ -538,6 +708,72 @@ async function handleDeleteHistory() {
   } catch (error) {
     console.error(error);
     toast('Не удалось удалить историю. Перезапустите приложение и повторите.');
+  }
+}
+
+// ---------- Резервная копия ----------
+let backupBusy = false;
+async function handleBackupSave() {
+  if (backupBusy) return;
+  backupBusy = true;
+  $('backup-save').disabled = true;
+  toast('Готовлю резервную копию…');
+  try {
+    flushDrafts();
+    const { blob, summary } = await createBackup(store);
+    const filename = backupFileName();
+    let saved;
+    if (platform.kind === 'apk') {
+      const result = await saveBlobViaBridge(platform.bridge, blob, filename, 'application/zip');
+      saved = result.status === 'saved';
+      if (result.status === 'cancelled') toast('Сохранение отменено');
+      else if (!saved) await notice('Копия не сохранена', result.message || 'Не удалось сохранить файл.');
+    } else {
+      downloadBlob(blob, filename);
+      saved = true;
+    }
+    if (saved) {
+      await store.setMeta(META_LAST_BACKUP, new Date().toISOString());
+      toast(`Копия сохранена: записей ${summary.records}, файлов ${summary.attachments}`);
+      await renderSettings();
+    }
+  } catch (e) {
+    if (!(e instanceof BackupError)) console.error(e);
+    await notice('Копия не создана', e instanceof BackupError ? e.message : 'Не удалось создать резервную копию. Перезапустите приложение и повторите.');
+  } finally {
+    backupBusy = false;
+    $('backup-save').disabled = false;
+  }
+}
+
+async function handleRestoreChosen(event) {
+  const input = event.target;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file || backupBusy) return;
+  backupBusy = true;
+  try {
+    const inspected = await inspectBackup(file);
+    const s = inspected.summary;
+    $('restore-summary').textContent =
+      `Копия от ${formatTime(s.createdAt) || 'неизвестной даты'} (версия ${s.appVersion || '—'}): сообщений ${s.messages}, ` +
+      `записей реестра ${s.records}, черновиков ${s.drafts}, файлов ${s.attachments}${s.attachments ? ` (${s.attachmentsSizeText})` : ''}.`;
+    if ((await ask($('confirm-restore'))) !== 'restore') return;
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+    await restoreBackup(store, inspected);
+    drafts = await store.loadDrafts();
+    await Promise.all([renderMessages(), renderSettings(), renderRegistry()]);
+    toast(`Данные восстановлены: записей ${s.records}, файлов ${s.attachments}`);
+  } catch (e) {
+    if (!(e instanceof BackupError)) console.error(e);
+    backupBusy = false; // можно сразу выбрать другой файл
+    await notice('Восстановление не выполнено',
+      e instanceof BackupError
+        ? `${e.message} Данные на телефоне не изменены.`
+        : 'Не удалось прочитать или записать данные. Данные на телефоне не изменены.');
+  } finally {
+    backupBusy = false;
   }
 }
 
@@ -595,6 +831,12 @@ async function start() {
   });
 
   $('delete-history').addEventListener('click', handleDeleteHistory);
+  $('attach-input').accept = ACCEPT;
+  $('attach').addEventListener('click', () => $('attach-input').click());
+  $('attach-input').addEventListener('change', handleFilesChosen);
+  $('backup-save').addEventListener('click', handleBackupSave);
+  $('backup-restore').addEventListener('click', () => $('restore-input').click());
+  $('restore-input').addEventListener('change', handleRestoreChosen);
   $('export').addEventListener('click', handleExport);
   $('record-save').addEventListener('click', saveRecord);
   $('record-delete').addEventListener('click', deleteOpenRecord);

@@ -46,6 +46,7 @@ jobs:
           $R "Сквозные тесты: этап 2" python tests/e2e/test_stage2.py e2e-out/stage2
           $R "Сквозные тесты: режим APK" python tests/e2e/test_apk_mode.py e2e-out/apk-mode
           $R "Сквозные тесты: исправления 0.3.1" python tests/e2e/test_review031.py e2e-out/review031
+          $R "Сквозные тесты: 0.4.0 (файлы, копия)" python tests/e2e/test_v040.py e2e-out/v040
       - name: Скриншоты и файлы тестов
         if: always()
         uses: actions/upload-artifact@v4

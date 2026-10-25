@@ -303,12 +303,137 @@ def full():
     finally:
         adb('shell', 'settings', 'put', 'global', 'always_finish_activities', '0')
 
+    files_flow(raw)
+
     check_logcat()
     if KEEP:
         log('Приложение оставлено с данными для проверки обновления')
     else:
         adb('uninstall', PKG, check=False)
     log('ПОЛНАЯ ПРОВЕРКА ПРОЙДЕНА')
+
+
+DOCS_PKG = r'package="com\.(?:google\.)?android\.documentsui"'
+
+
+def node_bounds(xml, attr_regex):
+    m = re.search(r'<node [^>]*' + attr_regex + r'[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+    if not m:
+        return None
+    x1, y1, x2, y2 = map(int, m.groups())
+    return (x1 + x2) // 2, (y1 + y2) // 2
+
+
+def tap_node(attr_regex, timeout=30, what=None):
+    end = time.time() + timeout
+    while time.time() < end:
+        point = node_bounds(ui_dump(), attr_regex)
+        if point:
+            adb('shell', 'input', 'tap', str(point[0]), str(point[1]))
+            return
+        time.sleep(1.5)
+    shot('not-found')
+    raise AssertionError(f'на экране нет: {what or attr_regex}')
+
+
+def pick_in_documents_ui(name_regex):
+    """Системное окно выбора файла: при необходимости сначала выбрать
+    приложение «Файлы» в списке, затем открыть «Загрузки» и нажать на файл."""
+    end = time.time() + 40
+    while time.time() < end:
+        xml = ui_dump()
+        if re.search(DOCS_PKG, xml):
+            break
+        point = node_bounds(xml, r'text="(?:Files|Файлы|Documents)"')
+        if point:
+            adb('shell', 'input', 'tap', str(point[0]), str(point[1]))
+        time.sleep(1.5)
+    else:
+        shot('no-documents-ui')
+        raise AssertionError('окно выбора файла не открылось')
+    target = r'text="' + name_regex + r'"'
+    if not node_bounds(ui_dump(), target):
+        tap_node(r'content-desc="(?:Show roots|Показать корневые папки)"', 15, 'меню папок')
+        tap_node(r'text="(?:Downloads|Загрузки)"', 15, 'папка «Загрузки»')
+        time.sleep(2)
+    shot('documents-ui')
+    tap_node(target, 20, f'файл {name_regex}')
+
+
+def files_flow(csv_bytes):
+    """0.4.0 на настоящем Android: прикрепление файла через окно выбора,
+    открытие файла другим приложением, копирование, резервная копия через
+    окно «Сохранить», удаление и восстановление через окно выбора файла."""
+    start_app()
+    page = Page()
+    page.wait('document.documentElement.dataset.ready === "true"', 30, 'запуск')
+    page.js("location.hash = 'dialog'")
+
+    # Прикрепить сохранённый ранее CSV (вид «Excel») через системное окно.
+    page.js("document.querySelector('#attach').click()")
+    page.close()
+    pick_in_documents_ui(r'jarvis-reestr-[^"]*\.csv')
+    time.sleep(2)
+    page = Page()
+    page.wait("document.querySelectorAll('#pending-files .pending-file').length === 1", 20, 'файл выбран')
+    shot('attach-pending')
+    page.js("document.querySelector('#input').value = 'Таблица к замечанию'")
+    page.js("document.querySelector('#send').click()")
+    page.wait("document.querySelectorAll('.msg-user .file-chip').length === 1", 10, 'файл в сообщении')
+    size = page.js("""(async () => {
+        const db = await new Promise(r => { const q = indexedDB.open('jarvis-mobile'); q.onsuccess = () => r(q.result); });
+        const items = await new Promise(r => { const q = db.transaction('attachments').objectStore('attachments').getAll(); q.onsuccess = () => r(q.result); });
+        db.close(); return items.map(i => i.blob.size); })()""")
+    assert size == [len(csv_bytes)], f'размер сохранённого файла {size}, ожидалось {len(csv_bytes)}'
+    log('Прикрепление файла через окно Android: OK')
+
+    # Копирование текста — через буфер обмена Android.
+    page.js("document.querySelector('.msg-user .copy-btn').click()")
+    page.wait("(document.querySelector('#toast').textContent || '') === 'Текст скопирован'", 5, 'копирование')
+    log('Копирование текста: OK')
+
+    # Открытие файла другим приложением: появляется системное окно выбора.
+    page.js("document.querySelector('.msg-user .file-chip').click()")
+    wait_ui_text(r'Открыть: jarvis-reestr|Open with|Открыть с помощью|No apps can perform|Нет приложений', 20)
+    shot('open-with')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+    time.sleep(1)
+    log('Открытие файла приложением телефона: OK')
+
+    # Резервная копия через окно «Сохранить».
+    page.js("location.hash = 'settings'")
+    page.js("document.querySelector('#backup-save').click()")
+    tap_save_in_picker()
+    page.wait("(document.querySelector('#toast').textContent || '').includes('Копия сохранена')", 40, 'копия сохранена')
+    backups = [l for l in adb('shell', 'find', '/sdcard/', '-name', "'jarvis-backup-*.zip'", check=False).splitlines() if l.strip()]
+    assert backups, 'файл копии не найден'
+    adb('pull', backups[0].strip(), str(OUT / 'backup.zip'))
+    log(f'Резервная копия: OK ({backups[0].strip()})')
+
+    # Удаление всего и восстановление из копии через окно выбора файла.
+    page.js("document.querySelector('#delete-history').click()")
+    page.wait("document.querySelector('#confirm-delete').open", 5)
+    page.js("document.querySelector('#confirm-delete button[value=delete]').click()")
+    page.wait("document.querySelector('#count-records').textContent === '0'", 10, 'удаление')
+    page.js("document.querySelector('#backup-restore').click()")
+    page.close()
+    pick_in_documents_ui(r'jarvis-backup-[^"]*\.zip')
+    time.sleep(2)
+    page = Page()
+    page.wait("document.querySelector('#confirm-restore').open", 30, 'окно восстановления')
+    shot('restore-confirm')
+    page.js("document.querySelector('#confirm-restore button[value=restore]').click()")
+    page.wait("(document.querySelector('#toast').textContent || '').includes('Данные восстановлены')", 30, 'восстановление')
+    page.js("location.hash = 'registry'")
+    page.wait("document.querySelectorAll('.record-row').length === 1", 10, 'запись после восстановления')
+    restored = page.js("""(async () => {
+        const db = await new Promise(r => { const q = indexedDB.open('jarvis-mobile'); q.onsuccess = () => r(q.result); });
+        const items = await new Promise(r => { const q = db.transaction('attachments').objectStore('attachments').getAll(); q.onsuccess = () => r(q.result); });
+        db.close(); return items.map(i => i.blob.size); })()""")
+    assert restored == [len(csv_bytes)], f'файл после восстановления: {restored}'
+    shot('registry-after-restore')
+    page.close()
+    log('Восстановление из копии через окно Android: OK')
 
 
 def killed_by_system():

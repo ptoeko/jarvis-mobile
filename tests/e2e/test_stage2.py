@@ -407,8 +407,9 @@ def upgrade_from_stage1(browser, device):
             v.caches = await caches.keys();
             v.appVersion = (await import('./js/core/config.js')).APP_VERSION;
             return v; }''')
-        assert info['version'] == 1, info
-        assert info['stores'] == ['messages', 'meta', 'records'], info
+        # 0.4.0: база версии 2 — добавлено хранилище attachments, старое не тронуто.
+        assert info['version'] == 2, info
+        assert info['stores'] == ['attachments', 'messages', 'meta', 'records'], info
         assert info['appVersion'] == APP_VERSION, info
         page.wait_for_function(f"caches.keys().then(k => k.length === 1 && k[0] === 'jarvis-shell-{APP_VERSION}')", timeout=15000)
 

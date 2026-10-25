@@ -2,7 +2,9 @@
 import { STORES } from './store.js';
 
 const DB_NAME = 'jarvis-mobile';
-const DB_VERSION = 1;
+// 2 — добавлено хранилище attachments (0.4.0). Создаются только недостающие
+// хранилища, существующие данные не трогаются.
+const DB_VERSION = 2;
 
 function promisify(request) {
   return new Promise((resolve, reject) => {

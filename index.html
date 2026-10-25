@@ -78,8 +78,13 @@
           <label for="input" class="visually-hidden">Сообщение или заметка</label>
           <textarea id="input" name="message" rows="1" maxlength="4000" enterkeyhint="enter"
             autocomplete="off" placeholder="Сообщение или заметка"></textarea>
+          <ul class="file-list pending-files" id="pending-files" aria-label="Прикреплённые файлы" hidden></ul>
           <p class="composer-error" id="composer-error" role="alert" hidden></p>
           <div class="composer-actions">
+            <button type="button" class="icon-btn" id="attach" aria-label="Прикрепить файл: фото, видео, Word, PDF, Excel" title="Прикрепить файл">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>
+            </button>
+            <input type="file" id="attach-input" multiple hidden>
             <button type="button" class="secondary" id="parse">В реестр</button>
             <button type="submit" class="send" id="send">Отправить</button>
           </div>
@@ -124,10 +129,24 @@
           <dl class="facts">
             <div><dt>Сообщений</dt><dd id="count-messages">0</dd></div>
             <div><dt>Записей реестра</dt><dd id="count-records">0</dd></div>
+            <div><dt>Вложений</dt><dd id="count-attachments">0</dd></div>
             <div><dt>Где хранятся</dt><dd id="storage-kind">—</dd></div>
           </dl>
-          <p class="note">Данные никуда не отправляются. Они хранятся только в браузере этого телефона.</p>
+          <p class="note" id="storage-note">Данные никуда не отправляются. Они хранятся только на этом телефоне.</p>
           <button type="button" class="danger" id="delete-history">Удалить всю историю</button>
+        </div>
+
+        <div class="group">
+          <h3>Резервная копия</h3>
+          <p class="note">Один файл со всеми сообщениями, записями реестра, черновиками и вложениями. Храните его вне телефона (компьютер, флешка, облако): при потере телефона или удалении приложения данные восстанавливаются только из копии.</p>
+          <dl class="facts">
+            <div><dt>Последняя копия</dt><dd id="last-backup">Не создавалась</dd></div>
+          </dl>
+          <div class="row-actions">
+            <button type="button" class="send" id="backup-save">Сохранить копию</button>
+            <button type="button" class="secondary" id="backup-restore">Восстановить из копии</button>
+          </div>
+          <input type="file" id="restore-input" accept=".zip,application/zip" hidden>
         </div>
 
         <div class="group">
@@ -211,6 +230,28 @@
       <div class="confirm-actions">
         <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
         <button type="submit" value="export" class="send" id="export-confirm">Скачать CSV</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="confirm" id="confirm-restore" aria-labelledby="confirm-restore-title">
+    <form method="dialog">
+      <h2 id="confirm-restore-title">Восстановить из копии?</h2>
+      <p id="restore-summary"></p>
+      <p><strong>Все текущие данные на этом телефоне будут заменены данными из копии.</strong> Если на телефоне есть новые записи, сначала сохраните отдельную копию.</p>
+      <div class="confirm-actions">
+        <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
+        <button type="submit" value="restore" class="danger">Заменить данные</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="confirm" id="notice" aria-labelledby="notice-title">
+    <form method="dialog">
+      <h2 id="notice-title">Сообщение</h2>
+      <p id="notice-text"></p>
+      <div class="confirm-actions">
+        <button type="submit" value="ok" class="send" autofocus>Понятно</button>
       </div>
     </form>
   </dialog>
