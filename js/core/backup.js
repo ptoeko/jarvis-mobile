@@ -216,7 +216,36 @@ export async function inspectBackup(blob) {
 }
 
 // Заменяет все данные на телефоне данными из проверенной копии.
+//
+// Шаг 1: файлы копируются в базу по одному. Каждый файл сначала читается в
+// память: Android WebView не может записать в базу часть файла, выбранного
+// в окне выбора (ошибка «Failed to write blobs»). По одному — чтобы большие
+// видео не занимали память все сразу. Файл с тем же идентификатором уже есть
+// на телефоне — он не перезаписывается (идентификатор файла не меняется).
+// Шаг 2: одна транзакция заменяет сообщения, записи, черновики и удаляет
+// файлы, которых нет в копии.
+// При сбое на шаге 1 или 2 добавленные файлы удаляются, прежние данные целы.
 export async function restoreBackup(store, inspected) {
-  await store.replaceAll(inspected.data);
+  const { data } = inspected;
+  const before = new Set(await store.attachmentIds());
+  const added = [];
+  try {
+    for (const a of data.attachments) {
+      if (before.has(a.id)) continue;
+      const blob = new Blob([await a.blob.arrayBuffer()], { type: a.type });
+      if (blob.size !== a.size) throw new BackupError(`Файл «${a.name}» прочитан не полностью.`);
+      await store.putAttachment({ ...a, blob });
+      added.push(a.id);
+    }
+    await store.replaceAll({
+      messages: data.messages,
+      records: data.records,
+      meta: data.meta,
+      keepAttachmentIds: data.attachments.map((a) => a.id),
+    });
+  } catch (error) {
+    await store.deleteAttachments(added).catch(() => {});
+    throw error;
+  }
   return inspected.summary;
 }

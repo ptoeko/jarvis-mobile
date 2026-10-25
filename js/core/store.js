@@ -36,6 +36,9 @@ export function createMemoryAdapter() {
       const item = data[store].get(id);
       return item ? structuredClone(item) : undefined;
     },
+    async keys(store) {
+      return [...data[store].keys()];
+    },
     async put(store, item) {
       data[store].set(item.id, structuredClone(item));
     },
@@ -264,13 +267,32 @@ export function createStore(adapter, now = () => new Date()) {
     });
   }
 
-  // Полная замена данных (восстановление из копии) одной транзакцией:
-  // при сбое на телефоне остаются прежние данные целиком.
-  function replaceAll({ messages, records, meta, attachments }) {
+  // Файлы вложений по одному (восстановление из копии: сначала файлы,
+  // затем одна транзакция с остальными данными).
+  async function attachmentIds() {
+    return adapter.keys('attachments');
+  }
+
+  function putAttachment(item) {
+    return serial(() => adapter.put('attachments', item));
+  }
+
+  function deleteAttachments(ids) {
+    return serial(() => adapter.commit(ids.map((id) => ({ type: 'delete', store: 'attachments', id }))));
+  }
+
+  // Полная замена данных одной транзакцией: сообщения, записи и служебные
+  // данные заменяются, файлы — остаются только перечисленные в keepAttachmentIds
+  // (они уже записаны). При сбое на телефоне остаются прежние данные целиком.
+  function replaceAll({ messages, records, meta, keepAttachmentIds }) {
     return serial(async () => {
+      const keep = new Set(keepAttachmentIds);
+      const stale = (await adapter.keys('attachments')).filter((id) => !keep.has(id));
       await adapter.commit([
-        ...STORES.map((store) => ({ type: 'clear', store })),
-        ...attachments.map((item) => ({ type: 'put', store: 'attachments', item })),
+        { type: 'clear', store: 'messages' },
+        { type: 'clear', store: 'records' },
+        { type: 'clear', store: 'meta' },
+        ...stale.map((id) => ({ type: 'delete', store: 'attachments', id })),
         ...messages.map((item) => ({ type: 'put', store: 'messages', item })),
         ...records.map((item) => ({ type: 'put', store: 'records', item })),
         ...meta.map((item) => ({ type: 'put', store: 'meta', item })),
@@ -294,6 +316,9 @@ export function createStore(adapter, now = () => new Date()) {
     getAttachment,
     snapshot,
     replaceAll,
+    attachmentIds,
+    putAttachment,
+    deleteAttachments,
     getMeta: (key) => adapter.getMeta(key),
     setMeta: (key, value) => adapter.setMeta(key, value),
   };

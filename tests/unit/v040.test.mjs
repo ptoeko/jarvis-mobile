@@ -276,3 +276,37 @@ test('копия с видео: файл в архиве совпадает ба
   assert.equal(await crc32Blob(got.blob), await crc32Blob(video));
   assert.equal(got.blob.size, video.size);
 });
+
+// ---------- Восстановление по шагам (исправление для Android WebView) ----------
+test('сбой при восстановлении: добавленные файлы удаляются, прежние данные целы', async () => {
+  const { store: source } = await filledStore();
+  const { blob } = await createBackup(source);
+  const inspected = await inspectBackup(blob);
+
+  const adapter = createMemoryAdapter();
+  const target = createStore(adapter);
+  const mine = await target.addMessage({ role: 'user', source: 'user', text: 'моё', files: [photo('моё.jpg')] });
+  const realCommit = adapter.commit;
+  adapter.commit = async (ops) => {
+    if (ops.some((o) => o.store === 'messages' && o.type === 'clear')) throw new Error('сбой записи');
+    return realCommit(ops);
+  };
+  await assert.rejects(restoreBackup(target, inspected), /сбой записи/);
+  adapter.commit = realCommit;
+  assert.deepEqual((await target.listMessages()).map((m) => m.text), ['моё']);
+  assert.deepEqual(await target.attachmentIds(), [mine.attachments[0].id], 'временные файлы удалены');
+});
+
+test('восстановление: лишние файлы удаляются, файлы копии записываются', async () => {
+  const { store: source } = await filledStore();
+  const { blob } = await createBackup(source);
+  const target = createStore(createMemoryAdapter());
+  await target.addMessage({ role: 'user', source: 'user', text: 'чужое', files: [photo('чужое.jpg')] });
+  await restoreBackup(target, await inspectBackup(blob));
+  const ids = await target.attachmentIds();
+  const expected = (await source.listMessages()).flatMap((m) => (m.attachments || []).map((a) => a.id));
+  assert.deepEqual(ids.sort(), expected.sort());
+  // Повторное восстановление той же копии поверх — без ошибок и дублей.
+  await restoreBackup(target, await inspectBackup(blob));
+  assert.equal((await target.attachmentIds()).length, expected.length);
+});

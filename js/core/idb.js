@@ -52,6 +52,9 @@ export async function createIdbAdapter(indexedDB = globalThis.indexedDB) {
     async get(store, id) {
       return promisify(tx(store, 'readonly').get(id));
     },
+    async keys(store) {
+      return promisify(tx(store, 'readonly').getAllKeys());
+    },
     async put(store, item) {
       const t = db.transaction(store, 'readwrite');
       t.objectStore(store).put(item);
