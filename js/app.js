@@ -350,10 +350,10 @@ function renderDrafts() {
       persistDraftsSoon();
     });
 
-    reject.addEventListener('click', () => {
+    reject.addEventListener('click', async () => {
       drafts = drafts.filter((d) => d !== draft);
-      persistDrafts();
       renderDrafts();
+      await persistDrafts(); // сообщение — только после записи в базу
       toast('Черновик отклонён');
     });
 
