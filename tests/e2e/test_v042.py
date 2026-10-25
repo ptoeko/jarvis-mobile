@@ -139,6 +139,10 @@ def not_installed_message_and_cancel(page, ctx):
     expect(page.locator('#notice')).to_be_visible()
     expect(page.locator('#notice-text')).to_contain_text('MAX не установлен')
     page.click('#notice button[value="ok"]')
+    # Сразу после сообщения об ошибке можно выбрать другое приложение.
+    page.locator('.msg-user').last.get_by_role('button', name='Поделиться сообщением').click()
+    expect(page.locator('#share-menu')).to_be_visible()
+    choose(page, 'cancel')
     # «Отмена» ничего не отправляет.
     page.locator('.msg-user').last.get_by_role('button', name='Поделиться сообщением').click()
     choose(page, 'cancel')

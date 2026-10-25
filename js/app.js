@@ -745,7 +745,10 @@ async function shareContent(content, what = '') {
 
     if (platform.kind === 'apk' && supportsShare(platform.bridge)) {
       const result = await shareViaBridge(platform.bridge, { target, subject: content.subject, text: content.text, files });
-      if (result.status !== 'shared') await notice('Не отправлено', result.message);
+      if (result.status !== 'shared') {
+        sharing = false; // после закрытия сообщения можно сразу выбрать другое приложение
+        await notice('Не отправлено', result.message);
+      }
       return;
     }
     // Браузер: письмо — через почтовую программу (только текст), остальное —
@@ -766,6 +769,7 @@ async function shareContent(content, what = '') {
       return;
     }
     const ok = await copyText(window, content.text || '');
+    sharing = false;
     await notice('Поделиться', `В этом браузере нельзя открыть ${targetLabel(target)} напрямую.${ok ? ' Текст скопирован — вставьте его в чат.' : ''}`);
   } catch (e) {
     console.error(e);
