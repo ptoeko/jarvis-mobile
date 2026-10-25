@@ -380,6 +380,8 @@ def files_flow(csv_bytes):
 
     # Прикрепить сохранённый ранее CSV (вид «Excel») через системное окно.
     page.js("document.querySelector('#attach').click()")
+    page.wait("document.querySelector('#attach-menu').open", 5, 'меню «Прикрепить»')
+    page.js("document.querySelector('#attach-menu button[value=file]').click()")
     page.close()
     pick_in_documents_ui(r'jarvis-reestr-[^"]*\.csv')
     time.sleep(2)

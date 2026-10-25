@@ -85,6 +85,8 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>
             </button>
             <input type="file" id="attach-input" multiple hidden>
+            <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
+            <input type="file" id="video-input" accept="video/*" capture="environment" hidden>
             <button type="button" class="secondary" id="parse">В реестр</button>
             <button type="submit" class="send" id="send">Отправить</button>
           </div>
@@ -230,6 +232,18 @@
       <div class="confirm-actions">
         <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
         <button type="submit" value="export" class="send" id="export-confirm">Скачать CSV</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="confirm attach-menu" id="attach-menu" aria-labelledby="attach-menu-title">
+    <form method="dialog">
+      <h2 id="attach-menu-title">Прикрепить</h2>
+      <div class="menu-list">
+        <button type="submit" value="photo" class="secondary">Снять фото</button>
+        <button type="submit" value="video" class="secondary">Снять видео</button>
+        <button type="submit" value="file" class="secondary">Выбрать файл: фото, видео, Word, PDF, Excel</button>
+        <button type="submit" value="cancel" class="secondary">Отмена</button>
       </div>
     </form>
   </dialog>

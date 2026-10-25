@@ -430,36 +430,48 @@ public class MainActivity extends Activity {
 
     // ---------- Выбор файла и камера ----------
 
+    // Три случая, их различает страница:
+    //  «Снять фото»  — accept=image/*, capture  → сразу приложение камеры;
+    //  «Снять видео» — accept=video/*, capture  → сразу камера в режиме видео;
+    //  «Выбрать файл», «Восстановить из копии» → системный файловый менеджер
+    //  (ACTION_OPEN_DOCUMENT), где видны все папки, «Загрузки», Диск и т. п.
+    // Общее окно «камера или файлы» не используется: на части телефонов в нём
+    // нет пункта «Файлы», и выбрать PDF или Word было бы нельзя.
     private boolean showFileChooser(ValueCallback<Uri[]> callback, WebChromeClient.FileChooserParams params) {
         if (chooserCallback != null) chooserCallback.onReceiveValue(null);
         chooserCallback = callback;
-
-        Log.i(TAG, "file chooser requested, accept=" + java.util.Arrays.toString(params.getAcceptTypes()));
-        boolean multiple = params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE;
-        boolean attach = false;
-        for (String t : params.getAcceptTypes()) {
-            if (t != null && t.contains("image/")) attach = true;
-        }
-
-        Intent content = new Intent(Intent.ACTION_GET_CONTENT);
-        content.addCategory(Intent.CATEGORY_OPENABLE);
-        content.setType("*/*");
-        if (attach) content.putExtra(Intent.EXTRA_MIME_TYPES, ATTACH_MIME);
-        if (multiple) content.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-
-        Intent chooser = Intent.createChooser(content, attach ? "Прикрепить файл" : "Выберите файл");
         cameraFile = null;
         videoFile = null;
-        if (attach) {
-            List<Intent> extra = new ArrayList<>();
-            Intent camera = cameraIntent();
-            if (camera != null) extra.add(camera);
-            Intent video = videoIntent();
-            if (video != null) extra.add(video);
-            if (!extra.isEmpty()) chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, extra.toArray(new Intent[0]));
+
+        String[] accept = params.getAcceptTypes();
+        boolean images = false, videos = false, attach = false;
+        for (String t : accept) {
+            if (t == null) continue;
+            if (t.startsWith("image/")) images = true;
+            if (t.startsWith("video/")) videos = true;
+            if (t.startsWith(".pdf") || t.startsWith(".doc") || t.startsWith(".xls")) attach = true;
+        }
+        Log.i(TAG, "file chooser requested, capture=" + params.isCaptureEnabled() + " accept=" + java.util.Arrays.toString(accept));
+
+        Intent intent;
+        if (params.isCaptureEnabled() && (images || videos) && !attach) {
+            intent = videos && !images ? videoIntent() : cameraIntent();
+            if (intent == null) {
+                chooserCallback = null;
+                Toast.makeText(this, "На телефоне нет приложения камеры.", Toast.LENGTH_LONG).show();
+                return false;
+            }
+        } else {
+            intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            if (attach || images || videos) intent.putExtra(Intent.EXTRA_MIME_TYPES, ATTACH_MIME);
+            if (params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            }
         }
         try {
-            startActivityForResult(chooser, REQUEST_CHOOSE_FILE);
+            startActivityForResult(intent, REQUEST_CHOOSE_FILE);
             return true;
         } catch (ActivityNotFoundException e) {
             chooserCallback = null;

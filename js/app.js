@@ -846,8 +846,21 @@ async function start() {
 
   $('delete-history').addEventListener('click', handleDeleteHistory);
   $('attach-input').accept = ACCEPT;
-  $('attach').addEventListener('click', () => $('attach-input').click());
-  $('attach-input').addEventListener('change', handleFilesChosen);
+  // Скрепка: меню «Снять фото / Снять видео / Выбрать файл». Окно выбора
+  // открывается прямо в обработчике нажатия — иначе Android его не покажет.
+  const menu = $('attach-menu');
+  $('attach').addEventListener('click', () => menu.showModal());
+  for (const button of menu.querySelectorAll('button')) {
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      menu.close();
+      const target = { photo: 'photo-input', video: 'video-input', file: 'attach-input' }[button.value];
+      if (target) $(target).click();
+    });
+  }
+  for (const id of ['attach-input', 'photo-input', 'video-input']) {
+    $(id).addEventListener('change', handleFilesChosen);
+  }
   $('backup-save').addEventListener('click', handleBackupSave);
   $('backup-restore').addEventListener('click', () => $('restore-input').click());
   $('restore-input').addEventListener('change', handleRestoreChosen);

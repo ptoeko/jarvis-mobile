@@ -105,6 +105,37 @@ def attach_files_and_send(page, ctx):
 
 
 @case
+def attach_menu_opens_pickers(page, ctx):
+    to_dialog(page)
+    page.click('#attach')
+    expect(page.locator('#attach-menu')).to_be_visible()
+    base.shot(page, 'v040-00-attach-menu')
+    for value, accept, capture in [('photo', 'image/*', True), ('video', 'video/*', True), ('file', None, False)]:
+        if not page.locator('#attach-menu').is_visible():
+            page.click('#attach')
+        with page.expect_file_chooser() as fc:
+            page.click(f'#attach-menu button[value="{value}"]')
+        chooser = fc.value
+        el = chooser.element
+        assert el.get_attribute('capture') == ('environment' if capture else None), value
+        if accept:
+            assert el.get_attribute('accept') == accept, value
+        else:
+            assert 'image/*' in el.get_attribute('accept') and '.pdf' in el.get_attribute('accept')
+        assert chooser.is_multiple() == (value == 'file')
+        expect(page.locator('#attach-menu')).to_be_hidden()
+    # Снятое фото попадает в список файлов к сообщению.
+    page.click('#attach')
+    with page.expect_file_chooser() as fc:
+        page.click('#attach-menu button[value="photo"]')
+    fc.value.set_files(fx('фото трещины.png'))
+    expect(page.locator('#pending-files .pending-file')).to_have_count(1)
+    page.click('#attach')
+    page.click('#attach-menu button[value="cancel"]')
+    expect(page.locator('#attach-menu')).to_be_hidden()
+
+
+@case
 def remove_file_before_sending(page, ctx):
     to_dialog(page)
     attach(page, 'фото трещины.png', 'акт освидетельствования.pdf')

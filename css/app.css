@@ -474,3 +474,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .row-actions button { flex: 1 1 160px; }
+
+.menu-list { display: flex; flex-direction: column; gap: 8px; }
+.menu-list button { width: 100%; text-align: left; }
