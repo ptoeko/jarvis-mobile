@@ -367,6 +367,13 @@ def pick_in_documents_ui(name_regex):
         time.sleep(2)
     shot('documents-ui')
     tap_node(target, 20, f'файл {name_regex}')
+    # При выборе нескольких файлов нажатие только отмечает файл —
+    # затем нужна кнопка «Выбрать» вверху окна.
+    time.sleep(2)
+    xml = ui_dump()
+    if re.search(DOCS_PKG, xml):
+        shot('documents-ui-selected')
+        tap_node(r'(?:text|content-desc)="(?i:select|выбрать|open|открыть)"', 15, 'кнопка «Выбрать»')
 
 
 def files_flow(csv_bytes):
