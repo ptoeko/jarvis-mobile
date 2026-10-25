@@ -130,7 +130,8 @@ class Page:
                 pass
             time.sleep(1)
         assert target, 'страница приложения не найдена в отладчике WebView'
-        self.ws = websocket.create_connection(target['webSocketDebuggerUrl'], timeout=30)
+        # Новые версии WebView отклоняют соединение с заголовком Origin.
+        self.ws = websocket.create_connection(target['webSocketDebuggerUrl'], timeout=30, suppress_origin=True)
         self.n = 0
 
     def js(self, expression):
