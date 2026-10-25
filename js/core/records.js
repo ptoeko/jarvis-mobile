@@ -44,8 +44,9 @@ function newDraftId() {
 }
 
 // Черновик: ждёт проверки человеком; в реестр попадает только после подтверждения.
-export function createDraft({ fields, sourceText, sourceMessageId = null, attachments = [] }) {
-  const draft = { draftId: newDraftId(), sourceText, sourceMessageId, attachments: attachmentRefs(attachments) };
+// filledBy: 'rules' — поля заполнены по правилам, 'ai' — ИИ агентом.
+export function createDraft({ fields, sourceText, sourceMessageId = null, attachments = [], filledBy = 'rules' }) {
+  const draft = { draftId: newDraftId(), sourceText, sourceMessageId, attachments: attachmentRefs(attachments), filledBy: filledBy === 'ai' ? 'ai' : 'rules' };
   for (const key of EDITABLE_FIELDS) draft[key] = normalizeFieldValue(fields?.[key]);
   return draft;
 }
@@ -62,6 +63,7 @@ export function restoreDraft(raw) {
     sourceText: raw.sourceText,
     sourceMessageId: typeof raw.sourceMessageId === 'string' ? raw.sourceMessageId : null,
     attachments: attachmentRefs(raw.attachments),
+    filledBy: raw.filledBy === 'ai' ? 'ai' : 'rules',
   };
   for (const key of EDITABLE_FIELDS) {
     const v = raw[key];

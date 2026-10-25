@@ -330,7 +330,7 @@ def status_and_settings_reflect_stage2(page, srv, ctx):
     page.click('.tab[data-target="status"]')
     expect(page.locator('[data-feature="registry"] .state')).to_have_text('По правилам')
     expect(page.locator('[data-feature="dialog"] .state')).to_have_text('Демо')
-    expect(page.locator('[data-feature="ai"] .state')).to_have_text('Этап 4')
+    expect(page.locator('[data-feature="ai"] .state')).to_have_text('Не подключён')
 
 
 @case

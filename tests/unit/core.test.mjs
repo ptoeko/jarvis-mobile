@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { validateMessage } from '../../js/core/validate.js';
 import { demoReply, DEMO_HELP_TEXT } from '../../js/core/demo.js';
 import { createStore, createMemoryAdapter } from '../../js/core/store.js';
-import { createAiClient, AiNotConfiguredError } from '../../js/core/ai.js';
+import { createAiClient, AiError } from '../../js/core/ai.js';
 import { computeFeatures, statusSummary } from '../../js/core/status.js';
 import { emptyRecord, REGISTRY_FIELDS, NOT_SPECIFIED, MAX_MESSAGE_LENGTH } from '../../js/core/config.js';
 
@@ -113,9 +113,11 @@ test('пустая запись реестра: все поля «Не указ�
 
 // ---------- ИИ не подключён ----------
 test('клиент ИИ по умолчанию не подключён и не делает запросов', async () => {
-  const client = createAiClient();
+  let calls = 0;
+  const client = createAiClient({ fetchImpl: async () => { calls++; } });
   assert.equal(client.configured, false);
-  await assert.rejects(client.send('привет'), AiNotConfiguredError);
+  await assert.rejects(client.chat([{ role: 'user', text: 'привет' }]), (e) => e instanceof AiError && e.kind === 'config');
+  assert.equal(calls, 0);
 });
 
 // ---------- Статус ----------
@@ -157,7 +159,8 @@ test('краткая сводка статуса содержит демо-ре�
 // ---------- Проверки проекта ----------
 function walk(dir) {
   return readdirSync(dir).flatMap((name) => {
-    if (name === 'node_modules' || name === 'tests' || name.startsWith('.')) return [];
+    // proxy — код посредника на сервере, в приложение не входит (проверяется отдельно).
+    if (name === 'node_modules' || name === 'tests' || name === 'proxy' || name.startsWith('.')) return [];
     const p = join(dir, name);
     return statSync(p).isDirectory() ? walk(p) : [p];
   });
@@ -179,7 +182,8 @@ test('приложение не обращается к внешним серв�
     const text = readFileSync(file, 'utf8');
     // Исключения — идентификаторы пространств имён XML (SVG, формат Excel),
     // это имена внутри файлов, по ним не выполняется ни одного запроса.
-    assert.doesNotMatch(text, /https?:\/\/(?!www\.w3\.org\/|schemas\.openxmlformats\.org\/|purl\.org\/dc\/)/, `${file}: внешний адрес`);
+    // Адрес ИИ агента вводит пользователь в Настройках — в коде его нет.
+    assert.doesNotMatch(text, /https?:\/\/(?!www\.w3\.org\/|schemas\.openxmlformats\.org\/|purl\.org\/dc\/)[a-z0-9]/i, `${file}: внешний адрес`);
   }
 });
 
@@ -208,4 +212,23 @@ test('неустановленное приложение и выключенн�
   const install = list.find((x) => x.id === 'install');
   assert.equal(install.state, 'off');
   assert.equal(install.label, 'Не установлено');
+});
+
+test('в приложении нигде нет названий модели и поставщика ИИ — только «ИИ агент»', () => {
+  const files = [
+    ...walk(ROOT).filter((p) => /\.(js|html|css|json|webmanifest)$/.test(p)),
+    ...walk(join(ROOT, 'android', 'app', 'src')).filter((p) => /\.(java|xml)$/.test(p)),
+  ];
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8');
+    assert.doesNotMatch(text, /claude|anthropic|open\s?ai|chat\s?gpt|\bgpt|sonnet|haiku|\bopus\b|gemini/i, `${file}: название модели или поставщика`);
+  }
+});
+
+test('посредник обращается только к API ИИ, ключ — только из секрета', () => {
+  const worker = readFileSync(join(ROOT, 'proxy', 'worker.js'), 'utf8');
+  const hosts = [...worker.matchAll(/https:\/\/([a-z0-9.-]+)/gi)].map((m) => m[1]);
+  assert.deepEqual([...new Set(hosts)], ['api.anthropic.com']);
+  assert.match(worker, /env\.ANTHROPIC_API_KEY/);
+  assert.doesNotMatch(worker, /sk-ant-[A-Za-z0-9_-]{10,}/);
 });

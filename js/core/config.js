@@ -3,7 +3,7 @@
 // приложения, видно любому, кто откроет страницу.
 
 export const APP_NAME = 'JARVIS Mobile';
-export const APP_VERSION = '0.4.2';
+export const APP_VERSION = '0.5.0';
 export const APP_STAGE = 2;
 
 export const NOT_SPECIFIED = 'Не указано';

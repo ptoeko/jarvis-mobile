@@ -488,3 +488,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .record-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .record-tools button { flex: 1 1 140px; }
 .record-tools .delete-record { margin-top: 0; }
+
+.typing .msg-text { color: var(--muted); font-style: italic; }
+#ai-state[data-state="on"] { color: var(--ok); }
+#ai-group .fields { margin-top: 8px; }

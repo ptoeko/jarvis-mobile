@@ -15,6 +15,7 @@ const KINDS = {
   pdf: { label: 'PDF', ext: ['pdf'] },
   word: { label: 'Word', ext: ['doc', 'docx', 'rtf', 'odt'] },
   excel: { label: 'Excel', ext: ['xls', 'xlsx', 'xlsm', 'csv', 'ods'] },
+  text: { label: 'Текст', ext: ['txt', 'md'] },
 };
 
 const MIME_BY_EXT = {
@@ -30,6 +31,7 @@ const MIME_BY_EXT = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
   csv: 'text/csv', ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  txt: 'text/plain', md: 'text/markdown',
 };
 
 // Значение атрибута accept для выбора файла.
