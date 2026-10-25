@@ -269,9 +269,8 @@ def full():
         assert len(files) >= 2, f'второй файл не сохранён: {files}'
         time.sleep(2)
         for i, f in enumerate(files):
-            # Путь в кавычках для оболочки телефона: в имени есть пробел и скобки.
-            data_text = adb('exec-out', 'cat', f"'{f}'", text=False)
-            (OUT / f'exported-{i}.csv').write_bytes(data_text)
+            # adb pull получает путь целиком, без оболочки: пробел и скобки не мешают.
+            adb('pull', f, str(OUT / f'exported-{i}.csv'))
             data = (OUT / f'exported-{i}.csv').read_bytes()
             assert data == raw, f'{f}: содержимое отличается ({len(data)} байт вместо {len(raw)})'
         shot('saved-after-activity-restart')
