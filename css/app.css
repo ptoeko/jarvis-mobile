@@ -477,3 +477,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 .menu-list { display: flex; flex-direction: column; gap: 8px; }
 .menu-list button { width: 100%; text-align: left; }
+
+.records-bar { flex-direction: column; align-items: stretch; gap: 8px; }
+.records-bar .count { white-space: nowrap; }
+.export-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.export-actions button { padding: 0 10px; }

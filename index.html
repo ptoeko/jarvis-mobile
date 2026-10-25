@@ -105,7 +105,10 @@
 
         <div class="records-bar">
           <p class="count" id="records-count">Записей: 0</p>
-          <button type="button" class="secondary" id="export" disabled>Экспорт CSV</button>
+          <div class="export-actions">
+            <button type="button" class="send" id="export-xlsx" disabled>Экспорт в Excel</button>
+            <button type="button" class="secondary" id="export" disabled>Экспорт CSV</button>
+          </div>
         </div>
         <p class="note" id="registry-hint">Чтобы добавить запись, напишите заметку в «Диалоге» и нажмите «В реестр».</p>
         <div class="table-wrap" tabindex="0" aria-label="Таблица реестра, прокручивается вбок">
@@ -232,6 +235,18 @@
       <div class="confirm-actions">
         <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
         <button type="submit" value="export" class="send" id="export-confirm">Скачать CSV</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="confirm" id="confirm-export-xlsx" aria-labelledby="confirm-export-xlsx-title">
+    <form method="dialog">
+      <h2 id="confirm-export-xlsx-title">Экспорт реестра в Excel</h2>
+      <p id="export-xlsx-summary"></p>
+      <p>Все значения записываются как текст: Excel не превратит отметки, оси и даты в числа. Шапка закреплена, у столбцов есть фильтры. В последнем столбце — имена приложенных файлов.</p>
+      <div class="confirm-actions">
+        <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
+        <button type="submit" value="export" class="send" id="export-xlsx-confirm">Скачать Excel</button>
       </div>
     </form>
   </dialog>
