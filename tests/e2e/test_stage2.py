@@ -147,12 +147,13 @@ def confirm_reject_and_edit_draft(page, srv, ctx):
 
 
 @case
-def drafts_are_lost_on_reload_but_note_stays(page, srv, ctx):
+def drafts_survive_reload_and_note_stays(page, srv, ctx):
+    # С версии 0.3.1 черновики хранятся в базе и не пропадают при перезапуске.
     parse_notes(page, N2)
     expect(page.locator('.draft')).to_have_count(1)
     page.reload()
     ready(page)
-    expect(page.locator('.draft')).to_have_count(0)
+    expect(page.locator('.draft')).to_have_count(1)
     expect(page.locator('#records-count')).to_have_text('Записей: 0')
     page.click('.tab[data-target="dialog"]')
     expect(page.locator('.msg-user .msg-text').last).to_have_text(N2)
@@ -340,6 +341,7 @@ def no_horizontal_scroll_with_drafts_and_records(page, srv, ctx):
     overflow = page.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth')
     assert overflow <= 0, f'горизонтальная прокрутка {overflow}px'
     page.locator('.record-row').first.click()
+    expect(page.locator('#record-dialog')).to_be_visible()  # окно открывается асинхронно
     box = page.locator('#record-dialog').bounding_box()
     assert box['x'] >= 0 and box['x'] + box['width'] <= 360, box
     shot(page, '14-edit-360px')
@@ -355,12 +357,25 @@ def light_theme_screenshots(page, srv, ctx):
     shot(page, '16-registry-light')
 
 
-# ---------- Обновление с версии 0.1.0 ----------
-def upgrade_from_stage1(browser, device):
-    old = Path(tempfile.mkdtemp(prefix='jarvis-v010-'))
-    archive = old / 'v010.tar'
-    subprocess.run(['git', '-C', str(ROOT), 'archive', '-o', str(archive), 'v0.1.0-stage1'], check=True)
+# ---------- Обновление со старых версий ----------
+# Коммиты прошлых версий. Метка v0.1.0-stage1 может отсутствовать (например, в
+# копии репозитория без меток), поэтому используется номер коммита.
+OLD_VERSIONS = {
+    '0.1.0': 'adaddbc1900a19b3d7e48c5659e5d1847862baa4',
+    '0.3.0': 'ddba4980ac0ddc1da842c921b7e60ca144912468',
+}
+
+
+def checkout_old(version):
+    old = Path(tempfile.mkdtemp(prefix=f'jarvis-v{version}-'))
+    archive = old / 'old.tar'
+    subprocess.run(['git', '-C', str(ROOT), 'archive', '-o', str(archive), OLD_VERSIONS[version]], check=True)
     subprocess.run(['tar', '-xf', str(archive), '-C', str(old)], check=True)
+    return old
+
+
+def upgrade_from_stage1(browser, device):
+    old = checkout_old('0.1.0')
     srv = Server(old)
     ctx = browser.new_context(**device, locale='ru-RU')
     page = ctx.new_page()
@@ -371,10 +386,11 @@ def upgrade_from_stage1(browser, device):
         page.goto(srv.url)
         ready(page)
         page.wait_for_function('navigator.serviceWorker.controller !== null', timeout=15000)
-        for text in ['старое сообщение 1', 'старое сообщение 2']:
+        for i, text in enumerate(['старое сообщение 1', 'старое сообщение 2']):
             page.fill('#input', text)
             page.click('#send')
-        expect(page.locator('.msg')).to_have_count(4)
+            # Ждём ответ: пока сообщение сохраняется, повторная отправка игнорируется.
+            expect(page.locator('.msg')).to_have_count(2 * (i + 1))
         assert page.locator('#parse').count() == 0, 'это должна быть версия 0.1.0'
 
         # Публикуем текущую версию на тот же адрес и открываем приложение.

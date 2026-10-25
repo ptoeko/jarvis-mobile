@@ -32,8 +32,28 @@ let store;
 const ai = createAiClient();
 env.aiConfigured = ai.configured;
 
-// Черновики живут только в памяти до подтверждения человеком.
+// Черновики ждут подтверждения человеком. Копия хранится в базе (без этого
+// Android, закрыв приложение в фоне, стёр бы непроверенные заметки).
 let drafts = [];
+
+let draftSaveTimer = null;
+function persistDrafts() {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = null;
+  return store.saveDrafts(drafts).catch((error) => {
+    console.error(error);
+    toast('Не удалось сохранить черновики. Подтвердите их до закрытия приложения.');
+  });
+}
+// Правки в полях сохраняются с небольшой задержкой, чтобы не писать в базу
+// на каждую букву; при сворачивании приложения — сразу.
+function persistDraftsSoon() {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(persistDrafts, 400);
+}
+function flushDrafts() {
+  if (draftSaveTimer) persistDrafts();
+}
 
 // ---------- Хранилище ----------
 async function initStore() {
@@ -244,6 +264,7 @@ async function handleParse() {
       clearComposer();
       const created = parsed.notes.map((n) => createDraft({ fields: n.fields, sourceText: n.note, sourceMessageId: message.id }));
       drafts.push(...created);
+      await persistDrafts();
       const reply = draftsReply(created.length);
       await store.addMessage({ role: 'assistant', source: reply.source, text: reply.text });
       pulseCore();
@@ -324,10 +345,14 @@ function renderDrafts() {
       el('div', { className: 'draft-actions' }, reject, accept));
 
     // Правки в полях сохраняются в черновике, пока он на экране.
-    fields.addEventListener('input', () => Object.assign(draft, readFields(fields)));
+    fields.addEventListener('input', () => {
+      Object.assign(draft, readFields(fields));
+      persistDraftsSoon();
+    });
 
     reject.addEventListener('click', () => {
       drafts = drafts.filter((d) => d !== draft);
+      persistDrafts();
       renderDrafts();
       toast('Черновик отклонён');
     });
@@ -504,6 +529,8 @@ async function renderSettings() {
 async function handleDeleteHistory() {
   if ((await ask($('confirm-delete'))) !== 'delete') return;
   try {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
     await store.clearHistory();
     drafts = [];
     await Promise.all([renderMessages(), renderSettings(), renderRegistry()]);
@@ -574,6 +601,16 @@ async function start() {
   $('record-dialog').addEventListener('close', () => { openRecordId = null; });
 
   store = await initStore();
+  try {
+    drafts = await store.loadDrafts();
+  } catch (error) {
+    console.error(error);
+    drafts = [];
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushDrafts();
+  });
+  window.addEventListener('pagehide', flushDrafts);
   await renderMessages();
   showScreen(currentRoute());
   document.documentElement.dataset.version = APP_VERSION;

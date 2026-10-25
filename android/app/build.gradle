@@ -14,10 +14,17 @@ def webVersion = {
      code: m.group(1).toInteger() * 10000 + m.group(2).toInteger() * 100 + m.group(3).toInteger()]
 }()
 
-// Подпись: ключ передаётся через переменные окружения (секреты GitHub).
-// Без ключа собирается только отладочная версия.
+// Подпись: ключ передаётся через переменные окружения (секрет GitHub
+// ANDROID_KEYSTORE_BASE64). Ключ постоянный: Android устанавливает обновление
+// поверх старой версии с сохранением данных, только если подпись та же.
+// Обе сборки (обычная и тестовая) подписываются этим ключом.
+// Без ключа собирается только тестовая версия для проверки на эмуляторе.
 def keystorePath = System.getenv('ANDROID_KEYSTORE_FILE')
-def hasReleaseKey = keystorePath != null && new File(keystorePath).exists()
+def hasReleaseKey = keystorePath != null && !keystorePath.isEmpty() && new File(keystorePath).exists()
+def envOr = { String name, String fallback ->
+    def v = System.getenv(name)
+    v == null || v.isEmpty() ? fallback : v
+}
 
 android {
     namespace 'ru.jarvis.mobile'
@@ -36,14 +43,17 @@ android {
         if (hasReleaseKey) {
             release {
                 storeFile file(keystorePath)
-                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
-                keyAlias System.getenv('ANDROID_KEY_ALIAS')
-                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+                storePassword envOr('ANDROID_KEYSTORE_PASSWORD', 'jarvis-mobile')
+                keyAlias envOr('ANDROID_KEY_ALIAS', 'jarvis')
+                keyPassword envOr('ANDROID_KEY_PASSWORD', 'jarvis-mobile')
             }
         }
     }
 
     buildTypes {
+        debug {
+            if (hasReleaseKey) signingConfig signingConfigs.release
+        }
         release {
             minifyEnabled false
             if (hasReleaseKey) signingConfig signingConfigs.release

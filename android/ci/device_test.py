@@ -5,10 +5,18 @@
 перезапуск приложения → экспорт CSV через системное окно «Сохранить» →
 кнопка «Назад». Сохранённый файл забирается с эмулятора и проверяется.
 
+Дополнительно (0.3.1): черновики переживают закрытие приложения системой;
+экспорт работает, даже если Android закрыл JARVIS, пока открыто окно «Сохранить»
+(режим «Не сохранять действия»).
+
 Режим smoke (подписанный APK для выпуска): установка, запуск, интерфейс
 на экране, нет ошибок JavaScript и аварийных завершений.
 
-Запуск: python3 device_test.py full|smoke путь/к.apk папка_результатов
+Режим update (подписанный APK): установка ПОВЕРХ тестовой версии с данными,
+как при обновлении на телефоне. Запись реестра должна сохраниться — это
+доказывает, что подпись совпадает и обновление не требует удаления.
+
+Запуск: python3 device_test.py full|smoke|update путь/к.apk папка_результатов [--keep]
 Все данные — вымышленные.
 """
 import json
@@ -24,6 +32,7 @@ import websocket  # пакет websocket-client
 PKG = 'ru.jarvis.mobile'
 ACTIVITY = f'{PKG}/.MainActivity'
 MODE, APK, OUT = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+KEEP = '--keep' in sys.argv  # не удалять приложение после full (для режима update)
 OUT.mkdir(parents=True, exist_ok=True)
 step_no = 0
 
@@ -61,6 +70,28 @@ def wait_ui_text(pattern, timeout=60):
             return xml
         time.sleep(2)
     raise AssertionError(f'на экране не появилось: {pattern}')
+
+
+def tap_save_in_picker():
+    xml = wait_ui_text(r'(?i)text="(SAVE|Сохранить)"', 40)
+    shot('android-save-dialog')
+    m = re.search(r'text="(?:SAVE|Save|Сохранить)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+    assert m, 'кнопка «Сохранить» системного окна не найдена'
+    x1, y1, x2, y2 = map(int, m.groups())
+    adb('shell', 'input', 'tap', str((x1 + x2) // 2), str((y1 + y2) // 2))
+
+
+def tap_text(text, timeout=30):
+    attr = r'(?:text|content-desc)="' + re.escape(text) + '"'
+    xml = wait_ui_text(attr, timeout)
+    m = re.search(attr + r'[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+    assert m, f'на экране нет «{text}»'
+    x1, y1, x2, y2 = map(int, m.groups())
+    adb('shell', 'input', 'tap', str((x1 + x2) // 2), str((y1 + y2) // 2))
+
+
+def exported_files():
+    return sorted(adb('shell', 'find', '/sdcard/', '-name', 'jarvis-reestr-*.csv', check=False).split())
 
 
 def start_app():
@@ -168,7 +199,14 @@ def full():
     assert numbers == ['2'], numbers
     log('Удаление без перенумерации: OK')
 
-    # Перезапуск приложения: данные сохранились.
+    # Непроверенный черновик перед закрытием приложения.
+    page.js("location.hash = 'dialog'")
+    page.js(f"""(() => {{ const i = document.querySelector('#input'); i.value = {json.dumps(N2)};
+        i.dispatchEvent(new Event('input')); document.querySelector('#parse').click(); }})()""")
+    page.wait("document.querySelectorAll('.draft').length === 1", 10, 'черновик')
+    time.sleep(1)
+
+    # Перезапуск приложения (как если бы Android закрыл его в фоне): данные сохранились.
     page.close()
     stop_app()
     time.sleep(1)
@@ -177,8 +215,11 @@ def full():
     page.wait('document.documentElement.dataset.ready === "true"', 30, 'повторный запуск')
     page.js("location.hash = 'registry'")
     page.wait("document.querySelectorAll('.record-row').length === 1", 10, 'запись после перезапуска')
+    page.wait("document.querySelectorAll('.draft').length === 1", 10, 'черновик после перезапуска')
     shot('registry-after-restart')
-    log('Данные после перезапуска: OK')
+    page.js("[...document.querySelectorAll('.draft button')].find(b => b.textContent === 'Отклонить').click()")
+    page.wait("document.querySelectorAll('.draft').length === 0", 5, 'отклонение черновика')
+    log('Данные и черновик после перезапуска: OK')
 
     # Кнопка «Назад» закрывает окно записи, а не приложение.
     page.js("document.querySelector('.record-row').click()")
@@ -193,12 +234,7 @@ def full():
     page.js("document.querySelector('#export').click()")
     page.wait("document.querySelector('#confirm-export').open", 5)
     page.js("document.querySelector('#export-confirm').click()")
-    xml = wait_ui_text(r'(?i)text="(SAVE|Сохранить)"', 40)
-    shot('android-save-dialog')
-    m = re.search(r'text="(?:SAVE|Save|Сохранить)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
-    assert m, 'кнопка «Сохранить» системного окна не найдена'
-    x1, y1, x2, y2 = map(int, m.groups())
-    adb('shell', 'input', 'tap', str((x1 + x2) // 2), str((y1 + y2) // 2))
+    tap_save_in_picker()
     page.wait("(document.querySelector('#toast').textContent || '').includes('сохранён')", 30, 'сообщение о сохранении')
     shot('saved')
     found = adb('shell', 'find', '/sdcard/', '-name', 'jarvis-reestr-*.csv', check=False).split()
@@ -214,9 +250,36 @@ def full():
     assert lines[2] == '' and len(lines) == 3, lines
     log(f'Экспорт CSV через окно Android: OK ({found[0]})')
 
-    page.close()
+    # Экспорт, когда Android закрывает JARVIS, пока открыто окно «Сохранить».
+    # До 0.3.1 файл в этом случае сохранялся пустым.
+    adb('shell', 'settings', 'put', 'global', 'always_finish_activities', '1')
+    try:
+        page.js("document.querySelector('#export').click()")
+        page.wait("document.querySelector('#confirm-export').open", 5)
+        page.js("document.querySelector('#export-confirm').click()")
+        page.close()
+        tap_save_in_picker()
+        end = time.time() + 30
+        while len(exported_files()) < 2 and time.time() < end:
+            time.sleep(1)
+        files = exported_files()
+        assert len(files) >= 2, f'второй файл не сохранён: {files}'
+        time.sleep(2)
+        for i, f in enumerate(files):
+            adb('pull', f, str(OUT / f'exported-{i}.csv'))
+            data = (OUT / f'exported-{i}.csv').read_bytes()
+            assert data == raw, f'{f}: содержимое отличается ({len(data)} байт вместо {len(raw)})'
+        shot('saved-after-activity-restart')
+        assert adb('shell', 'pidof', PKG).strip(), 'приложение закрылось'
+        log('Экспорт при закрытии приложения системой: OK')
+    finally:
+        adb('shell', 'settings', 'put', 'global', 'always_finish_activities', '0')
+
     check_logcat()
-    adb('uninstall', PKG, check=False)
+    if KEEP:
+        log('Приложение оставлено с данными для проверки обновления')
+    else:
+        adb('uninstall', PKG, check=False)
     log('ПОЛНАЯ ПРОВЕРКА ПРОЙДЕНА')
 
 
@@ -233,9 +296,23 @@ def smoke():
     log('ПРОВЕРКА ПОДПИСАННОГО APK ПРОЙДЕНА')
 
 
+def update():
+    # Тестовая версия с одной записью уже установлена (full --keep).
+    adb('logcat', '-c')
+    adb('install', '-r', APK)  # без удаления: как обновление на телефоне
+    start_app()
+    wait_ui_text('Демо-режим', 60)
+    tap_text('Реестр')
+    wait_ui_text('Записей: 1', 30)
+    shot('registry-after-update')
+    check_logcat()
+    adb('uninstall', PKG, check=False)
+    log('ОБНОВЛЕНИЕ БЕЗ ПОТЕРИ ДАННЫХ: OK')
+
+
 if __name__ == '__main__':
     try:
-        full() if MODE == 'full' else smoke()
+        {'full': full, 'smoke': smoke, 'update': update}[MODE]()
     except Exception:
         try:
             shot('failure')
