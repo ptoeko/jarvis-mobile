@@ -171,6 +171,7 @@ def status_is_honest(page, url, ctx):
 @case
 def delete_history_cancel_then_confirm(page, url, ctx):
     send(page, 'удали меня')
+    expect(page.locator('.msg')).to_have_count(2)  # сохранение завершено
     page.click('.tab[data-target="settings"]')
     expect(page.locator('#count-messages')).to_have_text('2')
     page.click('#delete-history')
@@ -196,6 +197,8 @@ def opens_without_internet(page, url, ctx):
     page.evaluate('navigator.serviceWorker.ready')
     page.wait_for_function('navigator.serviceWorker.controller !== null', timeout=10000)
     send(page, 'до отключения сети')
+    # Дожидаемся сохранения сообщения, иначе перезагрузка может его опередить.
+    expect(page.locator('.msg-user .msg-text')).to_have_text('до отключения сети')
     ctx.set_offline(True)
     try:
         page.reload()
