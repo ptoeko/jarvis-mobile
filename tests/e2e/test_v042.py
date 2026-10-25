@@ -93,6 +93,7 @@ def share_record_to_whatsapp_max_email(page, ctx):
     expect(page.locator('.record-row')).to_have_count(1)
     for target in ['whatsapp', 'max', 'email']:
         page.locator('.record-row').first.click()
+        expect(page.locator('#record-dialog')).to_be_visible()
         page.click('#record-share')
         expect(page.locator('#share-what')).to_have_text('Запись № 1')
         choose(page, target)
@@ -170,6 +171,7 @@ def share_buttons_fit_phone(page, ctx):
     assert overflow <= 0, overflow
     page.click('.tab[data-target="registry"]')
     page.locator('.record-row').first.click()
+    expect(page.locator('#record-share')).to_be_visible()  # окно записи открывается асинхронно
     box = page.locator('#record-share').bounding_box()
     assert box['height'] >= 44 and box['x'] + box['width'] <= 360, box
     base.shot(page, 'v042-02-record-share')
