@@ -311,15 +311,39 @@ def full():
     log('ПОЛНАЯ ПРОВЕРКА ПРОЙДЕНА')
 
 
+def killed_by_system():
+    """Android закрыл JARVIS из-за падения сервисов Google на эмуляторе
+    (WebView берёт шрифты у com.google.android.gms). Это сбой окружения
+    эмулятора, а не приложения: на телефоне так же закрылось бы любое
+    приложение со встроенным браузером."""
+    text = adb('logcat', '-d', check=False)
+    return re.search(rf'Killing \d+:{re.escape(PKG)}/\S+ .*dying proc', text) is not None
+
+
+def with_system_kill_retry(name, fn):
+    """Один повтор шага, если JARVIS закрыла система из-за чужого процесса.
+    Любая другая ошибка останавливает проверку сразу."""
+    try:
+        fn()
+    except Exception:
+        if not killed_by_system():
+            raise
+        print(f'::warning title=Эмулятор ({name})::Android закрыл JARVIS из-за падения сервисов Google на эмуляторе. Шаг повторяется один раз.', flush=True)
+        adb('logcat', '-c')
+        fn()
+
+
 def smoke():
-    adb('uninstall', PKG, check=False)
-    adb('install', APK)
-    adb('logcat', '-c')
-    start_app()
-    wait_ui_text('Демо-режим', 60)
-    shot('release-start')
-    time.sleep(3)
-    assert adb('shell', 'pidof', PKG, check=False).strip(), 'приложение не запущено'
+    def run():
+        adb('uninstall', PKG, check=False)
+        adb('install', APK)
+        adb('logcat', '-c')
+        start_app()
+        wait_ui_text('Демо-режим', 60)
+        shot('release-start')
+        time.sleep(3)
+        assert adb('shell', 'pidof', PKG, check=False).strip(), 'приложение не запущено'
+    with_system_kill_retry('smoke', run)
     check_logcat()
     log('ПРОВЕРКА ПОДПИСАННОГО APK ПРОЙДЕНА')
 
@@ -328,10 +352,14 @@ def update():
     # Тестовая версия с одной записью уже установлена (full --keep).
     adb('logcat', '-c')
     adb('install', '-r', APK)  # без удаления: как обновление на телефоне
-    start_app()
-    wait_ui_text('Демо-режим', 60)
-    tap_text('Реестр')
-    wait_ui_text('Записей: 1', 30)
+
+    def run():
+        stop_app()
+        start_app()
+        wait_ui_text('Демо-режим', 60)
+        tap_text('Реестр')
+        wait_ui_text('Записей: 1', 30)
+    with_system_kill_retry('update', run)
     shot('registry-after-update')
     check_logcat()
     adb('uninstall', PKG, check=False)
