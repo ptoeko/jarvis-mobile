@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 import urllib.request
 from pathlib import Path
 
@@ -104,16 +105,33 @@ def stop_app():
     adb('shell', 'am', 'force-stop', PKG)
 
 
+def app_crash(text):
+    """Строки аварийного завершения именно JARVIS. Падения служебных программ
+    эмулятора (например, uiautomator, которым тест читает экран) не считаются."""
+    lines = text.splitlines()
+    for n, l in enumerate(lines):
+        if 'FATAL EXCEPTION' not in l:
+            continue
+        block = lines[n:n + 40]
+        if any(f'Process: {PKG}' in b for b in block[:4]):
+            return block
+    return []
+
+
+def app_events(text):
+    """Записи системы о процессе JARVIS: завершён, убит, не отвечает."""
+    keys = ('died', 'Kill', 'kill', 'ANR', 'crash', 'Force')
+    return [l for l in text.splitlines() if PKG in l and any(k in l for k in keys)][-15:]
+
+
 def check_logcat():
     text = adb('logcat', '-d')
     (OUT / 'logcat.txt').write_text(text, encoding='utf-8')
-    if 'FATAL EXCEPTION' in text:
+    crash = app_crash(text)
+    for l in crash:
         # Стек ошибки — в аннотации GitHub, чтобы причина была видна без журнала.
-        lines = text.splitlines()
-        i = next(n for n, l in enumerate(lines) if 'FATAL EXCEPTION' in l)
-        for l in lines[i:i + 30]:
-            print(f'::error title=Аварийное завершение ({MODE})::{l[:400]}', flush=True)
-    assert 'FATAL EXCEPTION' not in text, f'аварийное завершение приложения в режиме {MODE} (см. logcat.txt)'
+        print(f'::error title=Аварийное завершение JARVIS ({MODE})::{l[:400]}', flush=True)
+    assert not crash, f'аварийное завершение приложения в режиме {MODE} (см. logcat.txt)'
     errors = [l for l in text.splitlines() if 'JarvisMobile' in l and 'console ERROR' in l]
     assert not errors, 'ошибки JavaScript:\n' + '\n'.join(errors)
 
@@ -121,7 +139,7 @@ def check_logcat():
 # ---------- Протокол отладки WebView ----------
 class Page:
     def __init__(self):
-        pid = adb('shell', 'pidof', PKG).strip()
+        pid = adb('shell', 'pidof', PKG, check=False).strip()
         assert pid, 'приложение не запущено'
         sock = f'webview_devtools_remote_{pid}'
         end = time.time() + 30
@@ -235,7 +253,7 @@ def full():
     page.wait("document.querySelector('#record-dialog').open", 5)
     adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
     page.wait("!document.querySelector('#record-dialog').open", 5, 'закрытие окна кнопкой «Назад»')
-    assert adb('shell', 'pidof', PKG).strip(), 'приложение закрылось'
+    assert adb('shell', 'pidof', PKG, check=False).strip(), 'приложение закрылось'
     log('Кнопка «Назад»: OK')
 
     # Экспорт CSV через системное окно «Сохранить».
@@ -280,7 +298,7 @@ def full():
             data = (OUT / f'exported-{i}.csv').read_bytes()
             assert data == raw, f'{f}: содержимое отличается ({len(data)} байт вместо {len(raw)})'
         shot('saved-after-activity-restart')
-        assert adb('shell', 'pidof', PKG).strip(), 'приложение закрылось'
+        assert adb('shell', 'pidof', PKG, check=False).strip(), 'приложение закрылось'
         log('Экспорт при закрытии приложения системой: OK')
     finally:
         adb('shell', 'settings', 'put', 'global', 'always_finish_activities', '0')
@@ -301,7 +319,7 @@ def smoke():
     wait_ui_text('Демо-режим', 60)
     shot('release-start')
     time.sleep(3)
-    assert adb('shell', 'pidof', PKG).strip(), 'приложение не запущено'
+    assert adb('shell', 'pidof', PKG, check=False).strip(), 'приложение не запущено'
     check_logcat()
     log('ПРОВЕРКА ПОДПИСАННОГО APK ПРОЙДЕНА')
 
@@ -326,14 +344,11 @@ if __name__ == '__main__':
     except Exception:
         try:
             text = adb('logcat', '-d', check=False)
-            lines = text.splitlines()
-            idx = [n for n, l in enumerate(lines) if 'FATAL EXCEPTION' in l or 'AndroidRuntime' in l and 'Caused by' in l]
-            if idx:
-                for l in lines[idx[0]:idx[0] + 40]:
-                    print(f'::error title=Аварийное завершение ({MODE})::{l[:400]}', flush=True)
-            else:
-                for l in [l for l in lines if 'JarvisMobile' in l or 'ru.jarvis' in l][-25:]:
-                    print(f'::error title=Журнал приложения ({MODE})::{l[:400]}', flush=True)
+            print(f'::error title=Проверка на эмуляторе ({MODE})::{traceback.format_exc().strip().splitlines()[-1][:600]}', flush=True)
+            lines = app_crash(text) or app_events(text) or \
+                [l for l in text.splitlines() if 'JarvisMobile' in l][-15:]
+            for l in lines:
+                print(f'::error title=Журнал JARVIS ({MODE})::{l[:400]}', flush=True)
         except Exception:
             pass
         try:
