@@ -163,7 +163,9 @@ class Page:
     def js(self, expression):
         self.n += 1
         self.ws.send(json.dumps({'id': self.n, 'method': 'Runtime.evaluate',
-                                 'params': {'expression': expression, 'awaitPromise': True, 'returnByValue': True}}))
+                                 'params': {'expression': expression, 'awaitPromise': True, 'returnByValue': True,
+                                            # как настоящее нажатие: окно выбора файла открывается только по жесту
+                                            'userGesture': True}}))
         while True:
             msg = json.loads(self.ws.recv())
             if msg.get('id') == self.n:
