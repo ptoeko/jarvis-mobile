@@ -550,6 +550,7 @@ public class MainActivity extends Activity {
         } else if (photo != null && photo.length() == 0) {
             photo.delete();
         }
+        Log.i(TAG, "file chooser result=" + resultCode + " uris=" + uris);
         callback.onReceiveValue(uris.isEmpty() ? null : uris.toArray(new Uri[0]));
     }
 

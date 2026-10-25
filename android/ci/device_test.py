@@ -386,7 +386,18 @@ def files_flow(csv_bytes):
     pick_in_documents_ui(r'jarvis-reestr-[^"]*\.csv')
     time.sleep(2)
     page = Page()
-    page.wait("document.querySelectorAll('#pending-files .pending-file').length === 1", 20, 'файл выбран')
+    try:
+        page.wait("document.querySelectorAll('#pending-files .pending-file').length === 1", 20, 'файл выбран')
+    except AssertionError:
+        xml = ui_dump()
+        err = page.js("document.querySelector('#composer-error').textContent")
+        pkgs = sorted(set(re.findall(r'package="([^"]+)"', xml)))
+        texts = [t for t in re.findall(r'text="([^"]+)"', xml) if t][:20]
+        print(f'::error title=Диагностика выбора::ошибка в поле: {err!r}; пакеты {pkgs}; тексты {texts}', flush=True)
+        for l in [l for l in adb('logcat', '-d', check=False).splitlines()
+                  if 'JarvisMobile' in l or 'chromium' in l.lower() or 'ActivityTaskManager: START' in l][-15:]:
+            print(f'::error title=Журнал выбора::{l[:400]}', flush=True)
+        raise
     shot('attach-pending')
     page.js("document.querySelector('#input').value = 'Таблица к замечанию'")
     page.js("document.querySelector('#send').click()")
