@@ -25,7 +25,7 @@ export function computeFeatures(env) {
     name: 'Диалог',
     state: env.aiConfigured ? 'works' : 'demo',
     note: env.aiConfigured
-      ? 'Ответы формирует подключённый ИИ.'
+      ? 'Отвечает ИИ агент: текст, фото и PDF. Может прислать таблицу Excel или документ.'
       : 'Ответы — заранее заданные тексты. ИИ не подключён.',
   });
 
@@ -104,7 +104,13 @@ export function computeFeatures(env) {
     note: 'Микрофон на клавиатуре телефона. Работает средствами клавиатуры, не приложения.',
   });
 
-  features.push({
+  features.push(env.aiConfigured ? {
+    id: 'registry',
+    name: 'Разбор заметок в реестр',
+    state: 'works',
+    label: 'ИИ агент',
+    note: 'Поля заполняет ИИ агент; если он недоступен — по правилам. Каждая запись подтверждается вручную.',
+  } : {
     id: 'registry',
     name: 'Разбор заметок в реестр',
     state: 'demo',
@@ -152,10 +158,13 @@ export function computeFeatures(env) {
   features.push({ id: 'voice-app', name: 'Кнопка микрофона в приложении', state: 'planned', stage: 3, note: 'Этап 3.' });
   features.push({
     id: 'ai',
-    name: 'Подключение ИИ',
+    name: 'ИИ агент',
     state: env.aiConfigured ? 'works' : 'planned',
     stage: 4,
-    note: env.aiConfigured ? 'Подключено через сервер-посредник.' : 'Этап 4, через защищённый сервер-посредник.',
+    label: env.aiConfigured ? undefined : 'Не подключён',
+    note: env.aiConfigured
+      ? 'Подключён через посредник. Сообщения и файлы, отправленные агенту, обрабатываются внешним ИИ-сервисом.'
+      : 'Настройки → «ИИ агент»: адрес посредника и код доступа.',
   });
 
   features.push({

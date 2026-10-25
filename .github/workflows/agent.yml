@@ -1,0 +1,89 @@
+# Публикация посредника «ИИ агент» на Cloudflare Workers.
+# Запускается при изменении папки proxy/ в main или вручную (Actions → «Посредник ИИ агента» → Run workflow).
+# Нужные секреты репозитория (Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID — доступ к Cloudflare;
+#   ANTHROPIC_API_KEY — ключ ИИ (в приложение не попадает);
+#   JARVIS_ACCESS_CODE — код доступа, его же вводят в приложении.
+name: Посредник ИИ агента
+
+on:
+  push:
+    branches: [main]
+    paths: ['proxy/**', '.github/workflows/agent.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Публикация посредника
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Проверка секретов
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AI_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CODE: ${{ secrets.JARVIS_ACCESS_CODE }}
+        run: |
+          missing=""
+          [ -n "$CF_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          [ -n "$CF_ACCOUNT" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          [ -n "$AI_KEY" ] || missing="$missing ANTHROPIC_API_KEY"
+          [ -n "$CODE" ] || missing="$missing JARVIS_ACCESS_CODE"
+          if [ -n "$missing" ]; then
+            echo "::error title=Не заданы секреты::$missing — см. INSTALL-AI.md"
+            exit 1
+          fi
+          if [ ${#CODE} -lt 16 ]; then
+            echo "::error title=Код доступа::JARVIS_ACCESS_CODE короче 16 символов"
+            exit 1
+          fi
+      - name: Тесты посредника
+        run: node --test tests/unit/proxy.test.mjs
+      - name: Публикация
+        id: deploy
+        working-directory: proxy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AI_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CODE: ${{ secrets.JARVIS_ACCESS_CODE }}
+        run: |
+          set -o pipefail
+          npx --yes wrangler@4 deploy 2>&1 | tee deploy.log
+          printf '%s' "$AI_KEY" | npx --yes wrangler@4 secret put ANTHROPIC_API_KEY
+          printf '%s' "$CODE" | npx --yes wrangler@4 secret put ACCESS_CODE
+          URL=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1)
+          if [ -z "$URL" ]; then
+            echo "::error title=Адрес не найден::Включите поддомен workers.dev в Cloudflare (Workers & Pages → открыть один раз) и запустите снова."
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+      - name: Проверка связи и ключа ИИ
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+          CODE: ${{ secrets.JARVIS_ACCESS_CODE }}
+        run: |
+          sleep 5
+          curl -sf -H "Authorization: Bearer $CODE" "$URL/v1/health" > /dev/null \
+            || { echo "::error title=Посредник не отвечает::$URL/v1/health"; exit 1; }
+          RESP=$(curl -s -H "Authorization: Bearer $CODE" -H 'Content-Type: application/json' \
+            -d '{"messages":[{"role":"user","text":"Ответь одним словом: готов"}]}' "$URL/v1/chat")
+          if echo "$RESP" | grep -q '"error"'; then
+            echo "::error title=ИИ агент не отвечает::$(echo "$RESP" | head -c 300)"
+            exit 1
+          fi
+          echo "::notice title=Адрес посредника для приложения::$URL"
+          echo "### ИИ агент работает" >> "$GITHUB_STEP_SUMMARY"
+          echo "Адрес для Настроек JARVIS: \`$URL\`" >> "$GITHUB_STEP_SUMMARY"

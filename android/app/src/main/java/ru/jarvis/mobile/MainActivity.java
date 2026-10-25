@@ -717,6 +717,9 @@ public class MainActivity extends Activity {
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
             Uri url = request.getUrl();
+            // Единственный внешний адрес — посредник ИИ агента (адрес задаёт
+            // пользователь в Настройках; только https и только *.workers.dev).
+            if (isAgentHost(url)) return null;
             if (!"https".equals(url.getScheme()) || !HOST.equals(url.getHost())) {
                 return emptyResponse(403, "Forbidden");
             }
@@ -739,13 +742,19 @@ public class MainActivity extends Activity {
         }
     }
 
+    static boolean isAgentHost(Uri url) {
+        String host = url.getHost();
+        return "https".equals(url.getScheme()) && host != null
+                && host.toLowerCase(Locale.ROOT).endsWith(".workers.dev");
+    }
+
     private static Map<String, String> headers() {
         Map<String, String> h = new HashMap<>();
         h.put("Cache-Control", "no-cache");
         h.put("X-Content-Type-Options", "nosniff");
         h.put("Content-Security-Policy",
                 "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'; "
-                        + "img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'");
+                        + "img-src 'self' data: blob:; connect-src 'self' https://*.workers.dev; object-src 'none'; base-uri 'self'");
         return h;
     }
 

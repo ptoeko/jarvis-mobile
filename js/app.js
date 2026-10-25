@@ -5,12 +5,12 @@ import { validateMessage } from './core/validate.js';
 import { demoReply, draftsReply } from './core/demo.js';
 import { createStore, createMemoryAdapter, RecordError } from './core/store.js';
 import { createIdbAdapter } from './core/idb.js';
-import { createAiClient } from './core/ai.js';
+import { createAiClient, AiError, normalizeAgentUrl, validAccessCode, blobToBase64, META_AI_URL, META_AI_CODE, AI_LABEL } from './core/ai.js';
 import { computeFeatures, statusSummary, STATE_LABELS } from './core/status.js';
 import { parseMessage } from './core/parse.js';
 import { createDraft } from './core/records.js';
 import { recordsToCsv, exportFileName } from './core/csv.js';
-import { recordsToXlsx, xlsxFileName, XLSX_MIME, registryTable } from './core/xlsx.js';
+import { recordsToXlsx, xlsxFileName, XLSX_MIME, registryTable, tableToXlsx } from './core/xlsx.js';
 import { detectPlatform, installSaveCallback, saveViaBridge, saveBlobViaBridge, openBlobViaBridge, copyText, shareViaBridge, supportsShare } from './core/platform.js';
 import { messageShare, recordShare, registryShare, targetLabel } from './core/share.js';
 import { ACCEPT, checkFiles, formatSize, kindLabel, attachmentRefs } from './core/attachments.js';
@@ -33,8 +33,23 @@ const env = {
 };
 
 let store;
-const ai = createAiClient();
-env.aiConfigured = ai.configured;
+// ИИ агент: адрес посредника и код доступа хранятся на телефоне (Настройки).
+let ai = createAiClient();
+env.aiConfigured = false;
+
+async function loadAi() {
+  const url = await store.getMeta(META_AI_URL);
+  const code = await store.getMeta(META_AI_CODE);
+  ai = createAiClient(url && code ? { url, code } : {});
+  env.aiConfigured = ai.configured;
+  updateModeLine();
+}
+
+function updateModeLine() {
+  const line = $('mode-line');
+  line.dataset.mode = env.aiConfigured ? 'ai' : 'demo';
+  line.textContent = env.aiConfigured ? `${AI_LABEL} подключён` : 'Демо-режим: ИИ не подключён';
+}
 
 // Черновики ждут подтверждения человеком. Копия хранится в базе (без этого
 // Android, закрыв приложение в фоне, стёр бы непроверенные заметки).
@@ -321,13 +336,13 @@ function messageElement(message) {
   const meta = el('div', { className: 'msg-meta' });
   const who = el('span', {});
   if (message.role === 'assistant') {
-    meta.append(el('span', { className: 'badge' }, message.source === 'ai' ? 'ИИ' : 'Демо'));
-    who.append(message.source === 'ai' ? 'Ответ ИИ' : 'Демо-ответ, не ИИ');
+    meta.append(el('span', { className: 'badge' }, message.source === 'ai' ? AI_LABEL : 'Демо'));
+    if (message.source !== 'ai') who.append('Демо-ответ, не ИИ');
   } else {
     who.append('Вы');
   }
   const time = formatTime(message.createdAt);
-  if (time) who.append(`, ${time}`);
+  if (time) who.append(who.textContent ? `, ${time}` : time);
   meta.append(who);
   if (message.text) {
     const copy = el('button', { type: 'button', className: 'copy-btn', title: 'Копировать текст' });
@@ -409,6 +424,97 @@ function clearComposer() {
   autosize();
 }
 
+// ---------- ИИ агент: переписка ----------
+const HISTORY_LIMIT = 20; // сколько последних сообщений видит агент
+const MAX_IMAGE_SIDE = 1568; // фото уменьшается до такого размера стороны
+const MAX_PDF = 10 * 1024 * 1024;
+
+// Фото уменьшается перед отправкой агенту (меньше трафика и расходов).
+// Если браузер не может открыть формат (например, HEIC) — передаётся только название.
+async function imageForAgent(blob) {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    const jpeg = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    return jpeg ? { type: 'image/jpeg', data: await blobToBase64(jpeg) } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Файлы последнего сообщения пользователя передаются содержимым (фото, PDF),
+// у остальных сообщений — только названия: так меньше трафика и расходов.
+async function agentFiles(refs, withContent) {
+  const out = [];
+  for (const ref of refs) {
+    const file = { name: ref.name, type: ref.type };
+    if (withContent) {
+      const item = await store.getAttachment(ref.id);
+      if (item?.blob && ref.kind === 'photo') Object.assign(file, (await imageForAgent(item.blob)) || {});
+      else if (item?.blob && ref.type === 'application/pdf' && item.blob.size <= MAX_PDF) file.data = await blobToBase64(item.blob);
+    }
+    out.push(file);
+  }
+  return out;
+}
+
+async function agentHistory() {
+  const messages = (await store.listMessages()).slice(-HISTORY_LIMIT);
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  const history = [];
+  for (const m of messages) {
+    history.push({
+      role: m.role,
+      text: m.text,
+      files: await agentFiles(attachmentRefs(m.attachments), m === lastUser),
+    });
+  }
+  return history;
+}
+
+// Файлы, созданные агентом: таблица → Excel, текст → .txt.
+async function agentReplyFiles(files) {
+  const out = [];
+  for (const f of files.slice(0, 5)) {
+    if (f?.kind === 'table' && Array.isArray(f.headers)) {
+      const blob = await tableToXlsx(f.headers, Array.isArray(f.rows) ? f.rows : [], { title: f.name });
+      out.push(new File([blob], String(f.name || 'таблица.xlsx'), { type: XLSX_MIME }));
+    } else if (f?.kind === 'text' && typeof f.content === 'string' && f.content) {
+      out.push(new File([f.content], String(f.name || 'документ.txt'), { type: 'text/plain' }));
+    }
+  }
+  return out;
+}
+
+function setTyping(on) {
+  const existing = $('agent-typing');
+  if (!on) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return;
+  $('messages').append(el('li', { id: 'agent-typing', className: 'msg msg-assistant typing' },
+    el('div', { className: 'msg-meta' }, el('span', { className: 'badge' }, AI_LABEL)),
+    el('div', { className: 'msg-text' }, 'ИИ агент печатает…')));
+  $('main').scrollTop = $('main').scrollHeight;
+}
+
+async function askAgent() {
+  setTyping(true);
+  try {
+    const reply = await ai.chat(await agentHistory());
+    const files = await agentReplyFiles(reply.files);
+    await store.addMessage({ role: 'assistant', source: 'ai', text: reply.text || (files.length ? 'Файл во вложении.' : '…'), files });
+  } finally {
+    setTyping(false);
+  }
+}
+
 async function handleSubmit(event) {
   event.preventDefault();
   await withComposer(async (text) => {
@@ -416,6 +522,18 @@ async function handleSubmit(event) {
       await store.addMessage({ role: 'user', source: 'user', text, files: pendingFiles });
       const withFiles = pendingFiles.length;
       clearComposer();
+      if (ai.configured) {
+        await renderMessages();
+        try {
+          await askAgent();
+          pulseCore();
+        } catch (e) {
+          if (!(e instanceof AiError)) console.error(e);
+          setComposerError(`${e instanceof AiError ? e.message : 'ИИ агент не ответил.'} Ваше сообщение сохранено — отправьте вопрос ещё раз позже.`);
+        }
+        await renderMessages();
+        return;
+      }
       const reply = text
         ? demoReply(text, statusSummary(computeFeatures(env)))
         : { source: 'demo', text: `Файлов сохранено: ${withFiles}. ИИ не подключён, поэтому содержимое файлов не анализируется. Чтобы приложить файлы к замечанию, напишите заметку и нажмите «В реестр».` };
@@ -444,11 +562,29 @@ async function handleParse() {
     try {
       const message = await store.addMessage({ role: 'user', source: 'user', text, files: pendingFiles });
       clearComposer();
+      // Поля заполняет ИИ агент; если он не подключён или недоступен — правила.
+      let filledBy = 'rules';
+      let fieldsList = parsed.notes.map((n) => n.fields);
+      if (ai.configured) {
+        await renderMessages();
+        setTyping(true);
+        try {
+          fieldsList = await ai.parse(parsed.notes.map((n) => n.note));
+          filledBy = 'ai';
+        } catch (e) {
+          if (!(e instanceof AiError)) console.error(e);
+          toast(`${e instanceof AiError ? e.message : 'ИИ агент недоступен.'} Поля заполнены по правилам.`);
+        } finally {
+          setTyping(false);
+        }
+      }
       // Файлы заметки прикладываются к каждому черновику из этого сообщения.
-      const created = parsed.notes.map((n) => createDraft({ fields: n.fields, sourceText: n.note, sourceMessageId: message.id, attachments: message.attachments }));
+      const created = parsed.notes.map((n, i) => createDraft({
+        fields: fieldsList[i], sourceText: n.note, sourceMessageId: message.id, attachments: message.attachments, filledBy,
+      }));
       drafts.push(...created);
       await persistDrafts();
-      const reply = draftsReply(created.length);
+      const reply = { ...draftsReply(created.length, filledBy), source: filledBy === 'ai' ? 'ai' : 'demo' };
       await store.addMessage({ role: 'assistant', source: reply.source, text: reply.text });
       pulseCore();
       await renderMessages();
@@ -522,7 +658,7 @@ function renderDrafts() {
     const accept = el('button', { type: 'button', className: 'send' }, 'Добавить в реестр');
     const refs = attachmentRefs(draft.attachments);
     const card = el('li', { className: 'draft', dataset: { draft: draft.draftId } },
-      el('h4', {}, `Черновик ${i + 1} из ${drafts.length}`),
+      el('h4', {}, `Черновик ${i + 1} из ${drafts.length} · ${draft.filledBy === 'ai' ? `поля заполнил ${AI_LABEL}` : 'по правилам, не ИИ'}`),
       sourceBlock(draft.sourceText),
       ...(refs.length ? [el('p', { className: 'attachments-title' }, `Файлы (${refs.length})`), attachmentList(refs)] : []),
       fields,
@@ -825,7 +961,68 @@ async function handleExportXlsx() {
 }
 
 // ---------- Настройки ----------
+function renderAiSettings() {
+  $('ai-state').textContent = env.aiConfigured ? 'Подключён' : 'Не подключён';
+  $('ai-state').dataset.state = env.aiConfigured ? 'on' : 'off';
+  $('ai-note').textContent = env.aiConfigured
+    ? 'Сообщения, файлы и заметки, которые вы отправляете агенту, обрабатываются внешним ИИ-сервисом. Не отправляйте сведения, которые нельзя передавать за пределы телефона.'
+    : 'Подключение — через ваш посредник. Введите его адрес и код доступа из инструкции. Ключей ИИ в приложении нет.';
+  $('ai-connect').textContent = env.aiConfigured ? 'Проверить и сохранить' : 'Подключить';
+  $('ai-disconnect').hidden = !env.aiConfigured;
+}
+
+function setAiError(text) {
+  $('ai-error').textContent = text || '';
+  $('ai-error').hidden = !text;
+}
+
+async function handleAiConnect(event) {
+  event.preventDefault();
+  setAiError('');
+  const url = normalizeAgentUrl($('ai-url').value);
+  const code = $('ai-code').value.trim();
+  if (!url) {
+    setAiError('Неверный адрес. Нужен адрес вида jarvis-agent.<имя>.workers.dev из инструкции.');
+    return;
+  }
+  if (!validAccessCode(code)) {
+    setAiError('Код доступа — не короче 16 символов, как в инструкции.');
+    return;
+  }
+  const button = $('ai-connect');
+  button.disabled = true;
+  try {
+    await createAiClient({ url, code }).check();
+    await store.setMeta(META_AI_URL, url);
+    await store.setMeta(META_AI_CODE, code);
+    await loadAi();
+    $('ai-url').value = url;
+    $('ai-code').value = '';
+    renderAiSettings();
+    renderStatus();
+    toast(`${AI_LABEL} подключён`);
+  } catch (e) {
+    if (!(e instanceof AiError)) console.error(e);
+    setAiError(e instanceof AiError ? e.message : 'Не удалось подключиться.');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleAiDisconnect() {
+  await store.setMeta(META_AI_URL, null);
+  await store.setMeta(META_AI_CODE, null);
+  await loadAi();
+  $('ai-code').value = '';
+  renderAiSettings();
+  renderStatus();
+  toast(`${AI_LABEL} отключён`);
+}
+
 async function renderSettings() {
+  renderAiSettings();
+  const savedUrl = await store.getMeta(META_AI_URL);
+  if (savedUrl && !$('ai-url').value) $('ai-url').value = savedUrl;
   const counts = await store.counts();
   $('count-messages').textContent = String(counts.messages);
   $('count-records').textContent = String(counts.records);
@@ -1007,6 +1204,9 @@ async function start() {
   $('record-dialog').addEventListener('close', () => { openRecordId = null; });
 
   store = await initStore();
+  await loadAi();
+  $('ai-form').addEventListener('submit', handleAiConnect);
+  $('ai-disconnect').addEventListener('click', handleAiDisconnect);
   try {
     drafts = await store.loadDrafts();
   } catch (error) {

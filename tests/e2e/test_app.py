@@ -159,7 +159,7 @@ def status_is_honest(page, url, ctx):
         return page.locator(f'[data-feature="{fid}"] .state')
     expect(state('dialog')).to_have_text('Демо')
     expect(state('storage')).to_have_text('Работает')
-    expect(state('ai')).to_have_text('Этап 4')
+    expect(state('ai')).to_have_text('Не подключён')  # с 0.5.0 — подключается в Настройках
     expect(state('registry')).to_have_text('По правилам')
     expect(state('export')).to_have_text('Работает')
     expect(state('xlsx')).to_have_text('Работает')  # с 0.4.1

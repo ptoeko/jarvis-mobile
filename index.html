@@ -99,7 +99,7 @@
 
         <div class="drafts" id="drafts" hidden>
           <h3 id="drafts-title">На проверке</h3>
-          <p class="note">Поля заполнены по правилам, не ИИ. Проверьте и исправьте их. В реестр попадают только подтверждённые записи.</p>
+          <p class="note">Проверьте и исправьте поля. В реестр попадают только подтверждённые записи.</p>
           <ol class="draft-list" id="draft-list"></ol>
         </div>
 
@@ -123,10 +123,25 @@
       <section class="screen" id="screen-settings" data-screen="settings" aria-labelledby="t-settings" hidden>
         <h2 id="t-settings">Настройки</h2>
 
-        <div class="group">
-          <h3>Подключение ИИ</h3>
-          <p class="value">Не подключено</p>
-          <p class="note">ИИ будет подключён на этапе 4 через защищённый сервер-посредник. Ключи в приложение не вводятся и в нём не хранятся.</p>
+        <div class="group" id="ai-group">
+          <h3>ИИ агент</h3>
+          <p class="value" id="ai-state">Не подключён</p>
+          <p class="note" id="ai-note">Подключение — через ваш посредник. Введите его адрес и код доступа из инструкции. Ключей ИИ в приложении нет.</p>
+          <form id="ai-form" class="fields" novalidate autocomplete="off">
+            <div class="field">
+              <label for="ai-url">Адрес посредника</label>
+              <input id="ai-url" type="url" inputmode="url" placeholder="jarvis-agent.….workers.dev" autocapitalize="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="ai-code">Код доступа</label>
+              <input id="ai-code" type="password" placeholder="Код из инструкции" autocapitalize="off" spellcheck="false">
+            </div>
+            <p class="form-error" id="ai-error" role="alert" hidden></p>
+            <div class="row-actions">
+              <button type="submit" class="send" id="ai-connect">Подключить</button>
+              <button type="button" class="secondary" id="ai-disconnect" hidden>Отключить</button>
+            </div>
+          </form>
         </div>
 
         <div class="group">

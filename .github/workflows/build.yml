@@ -49,6 +49,7 @@ jobs:
           $R "Сквозные тесты: 0.4.0 (файлы, копия)" python tests/e2e/test_v040.py e2e-out/v040
           $R "Сквозные тесты: 0.4.1 (Excel)" python tests/e2e/test_v041.py e2e-out/v041
           $R "Сквозные тесты: 0.4.2 (Поделиться)" python tests/e2e/test_v042.py e2e-out/v042
+          $R "Сквозные тесты: 0.5.0 (ИИ агент)" python tests/e2e/test_v050.py e2e-out/v050
       - name: Скриншоты и файлы тестов
         if: always()
         uses: actions/upload-artifact@v4

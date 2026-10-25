@@ -72,9 +72,9 @@ export function registryTable(records) {
   return { headers, rows };
 }
 
-function sheetXml({ headers, rows }) {
+function sheetXml({ headers, rows, widths }) {
   const last = columnName(headers.length - 1);
-  const cols = [...REGISTRY_FIELDS.map((f) => WIDTHS[f.key] || 18), FILES_WIDTH]
+  const cols = (widths || [...REGISTRY_FIELDS.map((f) => WIDTHS[f.key] || 18), FILES_WIDTH])
     .map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('');
   const head = `<row r="1">${headers.map((h, i) => textCell(`${columnName(i)}1`, h, 1)).join('')}</row>`;
   const body = rows.map((row, ri) => {
@@ -149,24 +149,24 @@ const WORKBOOK_RELS = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n
   + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
   + '</Relationships>';
 
-function workbookXml(rowCount, colCount) {
+function workbookXml(rowCount, colCount, sheetName = 'Реестр') {
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
     + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
     + 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
     + '<bookViews><workbookView/></bookViews>'
-    + '<sheets><sheet name="Реестр" sheetId="1" r:id="rId1"/></sheets>'
+    + `<sheets><sheet name="${xmlText(sheetName)}" sheetId="1" r:id="rId1"/></sheets>`
     + '<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">'
-    + `'Реестр'!$A$1:$${columnName(colCount - 1)}$${rowCount + 1}</definedName>`
-    + `<definedName name="_xlnm.Print_Titles" localSheetId="0">'Реестр'!$1:$1</definedName></definedNames>`
+    + `'${xmlText(sheetName)}'!$A$1:$${columnName(colCount - 1)}$${rowCount + 1}</definedName>`
+    + `<definedName name="_xlnm.Print_Titles" localSheetId="0">'${xmlText(sheetName)}'!$1:$1</definedName></definedNames>`
     + '</workbook>';
 }
 
-function coreXml(now) {
+function coreXml(now, title = 'Реестр замечаний') {
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
     + '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
     + 'xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" '
     + 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
-    + '<dc:title>Реестр замечаний</dc:title><dc:creator>JARVIS Mobile</dc:creator>'
+    + `<dc:title>${xmlText(title)}</dc:title><dc:creator>JARVIS Mobile</dc:creator>`
     + `<dcterms:created xsi:type="dcterms:W3CDTF">${now.toISOString().replace(/\.\d{3}Z$/, 'Z')}</dcterms:created>`
     + '</cp:coreProperties>';
 }
@@ -175,20 +175,35 @@ const APP_XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
   + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
   + '<Application>JARVIS Mobile</Application></Properties>';
 
-// Собирает файл .xlsx. Возвращает Blob.
-export async function recordsToXlsx(records, now = new Date()) {
-  const table = registryTable(records);
+async function buildXlsx(table, { sheetName, title, now }) {
   const zip = await createZip([
     { name: '[Content_Types].xml', data: CONTENT_TYPES, date: now },
     { name: '_rels/.rels', data: ROOT_RELS, date: now },
-    { name: 'docProps/core.xml', data: coreXml(now), date: now },
+    { name: 'docProps/core.xml', data: coreXml(now, title), date: now },
     { name: 'docProps/app.xml', data: APP_XML, date: now },
-    { name: 'xl/workbook.xml', data: workbookXml(table.rows.length, table.headers.length), date: now },
+    { name: 'xl/workbook.xml', data: workbookXml(table.rows.length, table.headers.length, sheetName), date: now },
     { name: 'xl/_rels/workbook.xml.rels', data: WORKBOOK_RELS, date: now },
     { name: 'xl/styles.xml', data: STYLES, date: now },
     { name: 'xl/worksheets/sheet1.xml', data: sheetXml(table), date: now },
   ]);
   return new Blob([zip], { type: XLSX_MIME });
+}
+
+// Собирает файл .xlsx с реестром. Возвращает Blob.
+export async function recordsToXlsx(records, now = new Date()) {
+  return buildXlsx(registryTable(records), { sheetName: 'Реестр', title: 'Реестр замечаний', now });
+}
+
+// Любая таблица (например, созданная ИИ агентом): все значения — текст,
+// ширина столбцов — по содержимому.
+export async function tableToXlsx(headers, rows, { title = 'Таблица', now = new Date() } = {}) {
+  const cols = headers.length;
+  const norm = rows.map((r) => Array.from({ length: cols }, (_, i) => String(r?.[i] ?? '')));
+  const widths = headers.map((h, i) => {
+    const longest = Math.max(String(h).length, ...norm.map((r) => Math.max(...r[i].split('\n').map((l) => l.length))));
+    return Math.min(60, Math.max(8, longest + 2));
+  });
+  return buildXlsx({ headers: headers.map(String), rows: norm, widths }, { sheetName: 'Лист1', title, now });
 }
 
 export function xlsxFileName(date = new Date()) {

@@ -1,0 +1,12 @@
+# Посредник «ИИ агент» для JARVIS Mobile (Cloudflare Workers).
+# Публикуется из GitHub Actions (задача «Посредник ИИ агента»).
+# Секреты задаются там же: ANTHROPIC_API_KEY, ACCESS_CODE.
+name = "jarvis-agent"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[vars]
+# Модель меняется здесь, без новой версии приложения. В приложении её название не показывается.
+MODEL = "claude-sonnet-5-5"
+ALLOWED_ORIGINS = "https://appassets.androidplatform.net"

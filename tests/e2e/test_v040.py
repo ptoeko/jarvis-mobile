@@ -28,7 +28,7 @@ FIX = OUT / 'fixtures'
 FIX.mkdir(parents=True, exist_ok=True)
 
 # Настоящий PNG 2×2 — чтобы миниатюра действительно отрисовывалась.
-PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDgRWlsgAAAABJRU5ErkJggg==')
+PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGM4IScHRAwQCgAfJgQRoo8irwAAAABJRU5ErkJggg==')
 FILES = {
     'фото трещины.png': PNG,
     'акт освидетельствования.pdf': b'%PDF-1.4\n% fictitious test file\n%%EOF\n',

@@ -12,6 +12,11 @@ import { ROLES, SOURCES, META_NEXT_NUMBER, META_DRAFTS } from './store.js';
 import { restoreDraft } from './records.js';
 import { attachmentRefs, cleanFileName, mimeOf, formatSize } from './attachments.js';
 import { createZip, readZip, crc32Blob, ZipError } from './zip.js';
+import { META_AI_URL, META_AI_CODE } from './ai.js';
+
+// Настройки ИИ агента (адрес и код доступа) в копию не попадают: копию могут
+// переслать, а код доступа — секрет. При восстановлении остаются текущие.
+const LOCAL_ONLY_META = new Set([META_AI_URL, META_AI_CODE]);
 
 export const BACKUP_FORMAT = 'jarvis-mobile-backup';
 export const BACKUP_FORMAT_VERSION = 1;
@@ -66,7 +71,7 @@ export async function createBackup(store, now = new Date()) {
     counts: { messages: snap.messages.length, records: snap.records.length, attachments: attachments.length },
     messages: snap.messages,
     records: snap.records,
-    meta: snap.meta.filter((m) => m.id !== META_LAST_BACKUP),
+    meta: snap.meta.filter((m) => m.id !== META_LAST_BACKUP && !LOCAL_ONLY_META.has(m.id)),
     attachments,
   };
   const blob = await createZip([
@@ -205,7 +210,7 @@ export async function inspectBackup(blob) {
       meta.push({ id: META_DRAFTS, value: drafts });
       continue;
     }
-    if (m.id === META_LAST_BACKUP) continue;
+    if (m.id === META_LAST_BACKUP || LOCAL_ONLY_META.has(m.id)) continue;
     meta.push({ id: m.id, value: m.value });
   }
   meta.push({ id: META_NEXT_NUMBER, value: nextNumber });
@@ -237,10 +242,15 @@ export async function restoreBackup(store, inspected) {
       await store.putAttachment({ ...a, blob });
       added.push(a.id);
     }
+    const keep = [];
+    for (const id of LOCAL_ONLY_META) {
+      const value = await store.getMeta(id);
+      if (value !== undefined) keep.push({ id, value });
+    }
     await store.replaceAll({
       messages: data.messages,
       records: data.records,
-      meta: data.meta,
+      meta: [...data.meta, ...keep],
       keepAttachmentIds: data.attachments.map((a) => a.id),
     });
   } catch (error) {
