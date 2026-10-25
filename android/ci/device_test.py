@@ -352,6 +352,13 @@ def pick_in_documents_ui(name_regex):
         time.sleep(1.5)
     else:
         shot('no-documents-ui')
+        xml = ui_dump()
+        pkgs = sorted(set(re.findall(r'package="([^"]+)"', xml)))
+        texts = [t for t in re.findall(r'(?:text|content-desc)="([^"]+)"', xml) if t][:25]
+        print(f'::error title=Экран при выборе файла::пакеты {pkgs}; тексты {texts}', flush=True)
+        logs = [l for l in adb('logcat', '-d', check=False).splitlines() if 'JarvisMobile' in l or 'ActivityTaskManager: START' in l][-12:]
+        for l in logs:
+            print(f'::error title=Журнал при выборе файла::{l[:400]}', flush=True)
         raise AssertionError('окно выбора файла не открылось')
     target = r'text="' + name_regex + r'"'
     if not node_bounds(ui_dump(), target):

@@ -434,6 +434,7 @@ public class MainActivity extends Activity {
         if (chooserCallback != null) chooserCallback.onReceiveValue(null);
         chooserCallback = callback;
 
+        Log.i(TAG, "file chooser requested, accept=" + java.util.Arrays.toString(params.getAcceptTypes()));
         boolean multiple = params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE;
         boolean attach = false;
         for (String t : params.getAcceptTypes()) {
