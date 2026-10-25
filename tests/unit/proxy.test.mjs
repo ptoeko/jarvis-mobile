@@ -24,6 +24,7 @@ function mockModel(replies) {
     calls.push({ url, body: JSON.parse(init.body), headers: init.headers });
     const r = replies.shift();
     if (typeof r === 'number') return new Response(JSON.stringify({ error: { message: 'anthropic internal detail' } }), { status: r });
+    if (r && r.status) return new Response(JSON.stringify(r.body), { status: r.status });
     return new Response(JSON.stringify(r), { status: 200 });
   };
   return { calls, restore: () => { globalThis.fetch = original; } };
@@ -147,4 +148,15 @@ test('прочее: сравнение кода, имя файла, слишко
   assert.equal(many.status, 400);
   const nf = await worker.fetch(req('/v1/nothing', { method: 'GET' }), ENV);
   assert.equal(nf.status, 404);
+});
+
+test('баланс не пополнен: понятное сообщение без названия поставщика', async () => {
+  const m = mockModel([{ status: 400, body: { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the Anthropic API.' } } }]);
+  try {
+    const res = await worker.fetch(req('/v1/chat', { body: { messages: [{ role: 'user', text: 'x' }] } }), ENV);
+    assert.equal(res.status, 402);
+    const { error } = await res.json();
+    assert.match(error, /Баланс ИИ агента не пополнен/);
+    assert.doesNotMatch(error, /anthropic|claude/i);
+  } finally { m.restore(); }
 });

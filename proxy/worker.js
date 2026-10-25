@@ -180,8 +180,18 @@ async function callModel(env, body) {
     throw new HttpError(502, 'ИИ агент недоступен. Повторите позже.');
   }
   if (!response.ok) {
-    // Текст ошибки поставщика не пересылается: в нём его название.
+    // Текст ошибки поставщика не пересылается: в нём его название. Читается
+    // только признак «баланс не пополнен», чтобы дать понятное сообщение.
     const s = response.status;
+    let detail = '';
+    try {
+      detail = String((await response.json())?.error?.message || '');
+    } catch {
+      detail = '';
+    }
+    if (/credit balance|billing|purchase credits|insufficient/i.test(detail)) {
+      throw new HttpError(402, 'Баланс ИИ агента не пополнен. Приложение работает без ИИ; агент заработает после пополнения.');
+    }
     if (s === 401 || s === 403) throw new HttpError(502, 'Посредник: ключ ИИ недействителен или не оплачен. Проверьте баланс и ключ.');
     if (s === 429) throw new HttpError(429, 'Слишком много запросов или исчерпан лимит расходов. Повторите позже.');
     if (s === 400 || s === 413) throw new HttpError(400, 'ИИ агент не принял запрос: возможно, файл слишком большой или неподдерживаемый.');

@@ -80,10 +80,17 @@ jobs:
             || { echo "::error title=Посредник не отвечает::$URL/v1/health"; exit 1; }
           RESP=$(curl -s -H "Authorization: Bearer $CODE" -H 'Content-Type: application/json' \
             -d '{"messages":[{"role":"user","text":"Ответь одним словом: готов"}]}' "$URL/v1/chat")
+          echo "::notice title=Адрес посредника для приложения::$URL"
+          echo "### Посредник опубликован" >> "$GITHUB_STEP_SUMMARY"
+          echo "Адрес для Настроек JARVIS: \`$URL\`" >> "$GITHUB_STEP_SUMMARY"
+          if echo "$RESP" | grep -q 'не пополнен'; then
+            # Баланс можно пополнить позже — посредник уже готов.
+            echo "::warning title=Баланс ИИ не пополнен::Посредник работает. ИИ агент начнёт отвечать после пополнения баланса; повторно запускать не нужно."
+            echo "Баланс ИИ не пополнен — агент заработает после пополнения." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if echo "$RESP" | grep -q '"error"'; then
             echo "::error title=ИИ агент не отвечает::$(echo "$RESP" | head -c 300)"
             exit 1
           fi
-          echo "::notice title=Адрес посредника для приложения::$URL"
-          echo "### ИИ агент работает" >> "$GITHUB_STEP_SUMMARY"
-          echo "Адрес для Настроек JARVIS: \`$URL\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "ИИ агент отвечает." >> "$GITHUB_STEP_SUMMARY"
