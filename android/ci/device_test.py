@@ -107,7 +107,13 @@ def stop_app():
 def check_logcat():
     text = adb('logcat', '-d')
     (OUT / 'logcat.txt').write_text(text, encoding='utf-8')
-    assert 'FATAL EXCEPTION' not in text, 'аварийное завершение приложения (см. logcat.txt)'
+    if 'FATAL EXCEPTION' in text:
+        # Стек ошибки — в аннотации GitHub, чтобы причина была видна без журнала.
+        lines = text.splitlines()
+        i = next(n for n, l in enumerate(lines) if 'FATAL EXCEPTION' in l)
+        for l in lines[i:i + 30]:
+            print(f'::error title=Аварийное завершение ({MODE})::{l[:400]}', flush=True)
+    assert 'FATAL EXCEPTION' not in text, f'аварийное завершение приложения в режиме {MODE} (см. logcat.txt)'
     errors = [l for l in text.splitlines() if 'JarvisMobile' in l and 'console ERROR' in l]
     assert not errors, 'ошибки JavaScript:\n' + '\n'.join(errors)
 
