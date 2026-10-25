@@ -37,9 +37,33 @@ export function validateFields(input) {
 
 let draftCounter = 0;
 
-// Черновик хранится только в памяти до подтверждения человеком.
+function newDraftId() {
+  const rnd = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : Math.random().toString(36).slice(2);
+  return `draft-${Date.now().toString(36)}-${++draftCounter}-${rnd}`;
+}
+
+// Черновик: ждёт проверки человеком; в реестр попадает только после подтверждения.
 export function createDraft({ fields, sourceText, sourceMessageId = null }) {
-  const draft = { draftId: `draft-${Date.now().toString(36)}-${++draftCounter}`, sourceText, sourceMessageId };
+  const draft = { draftId: newDraftId(), sourceText, sourceMessageId };
   for (const key of EDITABLE_FIELDS) draft[key] = normalizeFieldValue(fields?.[key]);
+  return draft;
+}
+
+// Восстанавливает черновик, прочитанный из базы. Возвращает null, если данные
+// повреждены (нет исходного текста или идентификатора). Поля приводятся к тексту;
+// слишком длинные значения не обрезаются — их покажет проверка при подтверждении.
+export function restoreDraft(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (typeof raw.draftId !== 'string' || raw.draftId === '') return null;
+  if (typeof raw.sourceText !== 'string' || raw.sourceText.trim() === '') return null;
+  const draft = {
+    draftId: raw.draftId,
+    sourceText: raw.sourceText,
+    sourceMessageId: typeof raw.sourceMessageId === 'string' ? raw.sourceMessageId : null,
+  };
+  for (const key of EDITABLE_FIELDS) {
+    const v = raw[key];
+    draft[key] = typeof v === 'string' ? (v.trim() === '' ? NOT_SPECIFIED : v) : normalizeFieldValue(v);
+  }
   return draft;
 }

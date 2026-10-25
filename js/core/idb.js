@@ -74,5 +74,19 @@ export async function createIdbAdapter(indexedDB = globalThis.indexedDB) {
       t.objectStore('meta').put({ id: key, value });
       await done(t);
     },
+    // Несколько изменений одной транзакцией: либо выполняются все, либо ни одно
+    // (например, запись реестра + счётчик номеров + список черновиков).
+    async commit(ops) {
+      const names = [...new Set(ops.map((op) => op.store))];
+      const t = db.transaction(names, 'readwrite');
+      for (const op of ops) {
+        const os = t.objectStore(op.store);
+        if (op.type === 'put') os.put(op.item);
+        else if (op.type === 'delete') os.delete(op.id);
+        else if (op.type === 'clear') os.clear();
+        else throw new Error(`Неизвестная операция: ${op.type}`);
+      }
+      await done(t);
+    },
   };
 }

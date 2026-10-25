@@ -4,7 +4,8 @@ name: Сборка и проверка
 
 on:
   push:
-    branches: [main]
+    # main — выпуск; claude/** — проверка исправлений до слияния (без выпуска).
+    branches: [main, 'claude/**']
   workflow_dispatch:
 
 permissions:
@@ -27,7 +28,7 @@ jobs:
         with:
           node-version: 22
       - name: Модульные тесты
-        run: npm test
+        run: .github/scripts/run.sh "Модульные тесты" npm test
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -39,9 +40,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends libreoffice-calc
       - name: Сквозные тесты
         run: |
-          python tests/e2e/test_app.py e2e-out/stage1
-          python tests/e2e/test_stage2.py e2e-out/stage2
-          python tests/e2e/test_apk_mode.py e2e-out/apk-mode
+          set -e
+          R=.github/scripts/run.sh
+          $R "Сквозные тесты: этап 1" python tests/e2e/test_app.py e2e-out/stage1
+          $R "Сквозные тесты: этап 2" python tests/e2e/test_stage2.py e2e-out/stage2
+          $R "Сквозные тесты: режим APK" python tests/e2e/test_apk_mode.py e2e-out/apk-mode
+          $R "Сквозные тесты: исправления 0.3.1" python tests/e2e/test_review031.py e2e-out/review031
       - name: Скриншоты и файлы тестов
         if: always()
         uses: actions/upload-artifact@v4
@@ -73,7 +77,7 @@ jobs:
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "file=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Секрет ANDROID_KEYSTORE_BASE64 не задан — подписанный APK для выпуска не собирается."
+            echo "::warning::Секрет ANDROID_KEYSTORE_BASE64 не задан — APK для установки на телефон не выпускается (только тестовая сборка). См. INSTALL.md, раздел «Ключ подписи»."
           fi
       - name: Сборка
         working-directory: android
@@ -83,7 +87,7 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          ./gradlew --no-daemon assembleDebug assembleRelease
+          ../.github/scripts/run.sh "Сборка APK" ./gradlew --no-daemon assembleDebug assembleRelease
       - name: Проверка APK и подписи
         id: meta
         run: |
@@ -95,6 +99,16 @@ jobs:
           if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
             cp android/app/build/outputs/apk/release/app-release.apk "dist/JARVIS-$VERSION.apk"
             "$BT/apksigner" verify --verbose --print-certs "dist/JARVIS-$VERSION.apk"
+            # Ключ должен быть тем же, что и у прошлых версий: иначе телефон
+            # не установит обновление поверх, и данные пришлось бы удалить.
+            EXPECTED=$(tr -d '[:space:]' < android/signing-certificate-sha256.txt)
+            for f in "dist/JARVIS-$VERSION.apk" "dist/JARVIS-$VERSION-test.apk"; do
+              ACTUAL=$("$BT/apksigner" verify --print-certs "$f" | grep -m1 'certificate SHA-256 digest' | awk '{print $NF}')
+              if [ "$ACTUAL" != "$EXPECTED" ]; then
+                echo "::error title=Ключ подписи::$f подписан другим ключом ($ACTUAL), ожидался $EXPECTED. Обновление поверх установленной версии будет невозможно."
+                exit 1
+              fi
+            done
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
             echo "signed=false" >> "$GITHUB_OUTPUT"
@@ -138,7 +152,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash android/ci/run-device-tests.sh device-out
+          script: .github/scripts/run.sh "Проверка на эмуляторе Android" bash android/ci/run-device-tests.sh device-out
       - name: Скриншоты и журналы с эмулятора
         if: always()
         uses: actions/upload-artifact@v4
@@ -167,18 +181,24 @@ jobs:
         run: |
           TAG="v$VERSION"
           APK="dist/JARVIS-$VERSION.apk"
-          NOTES="JARVIS Mobile $VERSION. Установка: откройте файл JARVIS-$VERSION.apk на телефоне. Проверен на эмуляторе Android 14. Сборка ${GITHUB_SHA::7}."
+          # Постоянное имя файла: ссылка .../releases/latest/download/JARVIS-Mobile.apk
+          # всегда ведёт на последнюю версию.
+          cp "$APK" dist/JARVIS-Mobile.apk
+          NOTES="JARVIS Mobile $VERSION. Установка: скачайте JARVIS-Mobile.apk на телефон и откройте. Обновление ставится поверх старой версии, данные сохраняются. Проверено на эмуляторе Android 14 (в том числе обновление поверх версии с данными). Сборка ${GITHUB_SHA::7}."
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" --clobber
-            gh release edit "$TAG" --notes "$NOTES"
+            gh release upload "$TAG" "$APK" dist/JARVIS-Mobile.apk --clobber
+            gh release edit "$TAG" --notes "$NOTES" --latest
           else
-            gh release create "$TAG" "$APK" --title "JARVIS Mobile $VERSION" --notes "$NOTES" --target "$GITHUB_SHA"
+            gh release create "$TAG" "$APK" dist/JARVIS-Mobile.apk --title "JARVIS Mobile $VERSION" --notes "$NOTES" --target "$GITHUB_SHA" --latest
           fi
 
   pages:
     name: Публикация веб-версии
     needs: web-tests
     if: github.ref == 'refs/heads/main'
+    # Веб-версия — запасной вариант. Если GitHub Pages не включён в настройках
+    # репозитория, это не должно помечать сборку APK как неудачную.
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       pages: write

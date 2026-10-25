@@ -15,10 +15,14 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -39,11 +43,15 @@ public class MainActivity extends Activity {
     static final String HOST = "appassets.androidplatform.net";
     static final String START_URL = "https://" + HOST + "/index.html";
     private static final int REQUEST_SAVE_FILE = 1001;
+    private static final String STATE_PENDING_SAVE = "jarvis.pendingSave";
+    private static final String PENDING_FILE = "pending-export.bin";
 
     private WebView webView;
 
-    // Файл, ожидающий выбора места сохранения.
-    private String pendingContent;
+    // Файл, ожидающий выбора места сохранения. Содержимое лежит во внутренней
+    // папке приложения (не в памяти): пока открыто системное окно «Сохранить»,
+    // Android может закрыть JARVIS, и без этой копии файл сохранился бы пустым.
+    private boolean savePending;
     private String pendingCallbackId;
 
     @Override
@@ -80,6 +88,13 @@ public class MainActivity extends Activity {
             }
         });
 
+        // Окно «Сохранить» было открыто, когда Android закрыл приложение:
+        // результат придёт в onActivityResult, содержимое ждёт в pendingFile().
+        savePending = savedInstanceState != null
+                && savedInstanceState.getBoolean(STATE_PENDING_SAVE, false)
+                && pendingFile().exists();
+        if (!savePending) pendingFile().delete();
+
         if (savedInstanceState == null || webView.restoreState(savedInstanceState) == null) {
             webView.loadUrl(START_URL);
         }
@@ -88,7 +103,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        webView.saveState(outState);
+        outState.putBoolean(STATE_PENDING_SAVE, savePending);
+        if (webView != null) webView.saveState(outState);
+    }
+
+    private File pendingFile() {
+        return new File(getCacheDir(), PENDING_FILE);
     }
 
     @Override
@@ -140,21 +160,30 @@ public class MainActivity extends Activity {
     // ---------- Сохранение файла через системный диалог «Сохранить» ----------
 
     private void startSave(String fileName, String mimeType, String content, String callbackId) {
-        if (pendingContent != null) {
+        if (savePending) {
             reportSave(callbackId, "error", "Уже открыто окно сохранения файла.");
+            return;
+        }
+        try (OutputStream out = new FileOutputStream(pendingFile())) {
+            out.write(content.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            Log.e(TAG, "pending save failed", e);
+            pendingFile().delete();
+            reportSave(callbackId, "error", "Не хватает места в памяти телефона для подготовки файла.");
             return;
         }
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType(mimeType);
         intent.putExtra(Intent.EXTRA_TITLE, fileName);
-        pendingContent = content;
+        savePending = true;
         pendingCallbackId = callbackId;
         try {
             startActivityForResult(intent, REQUEST_SAVE_FILE);
         } catch (ActivityNotFoundException e) {
-            pendingContent = null;
+            savePending = false;
             pendingCallbackId = null;
+            pendingFile().delete();
             reportSave(callbackId, "error", "На телефоне нет приложения для выбора места сохранения файлов.");
         }
     }
@@ -163,30 +192,47 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQUEST_SAVE_FILE) return;
-        final String content = pendingContent;
+        // callbackId == null: страница перезапускалась, пока было открыто окно
+        // «Сохранить». Файл всё равно записывается, итог — системным сообщением.
         final String callbackId = pendingCallbackId;
-        pendingContent = null;
+        final File source = pendingFile();
+        final boolean hadContent = savePending && source.exists();
+        savePending = false;
         pendingCallbackId = null;
-        if (callbackId == null) return;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            source.delete();
             reportSave(callbackId, "cancelled", "Сохранение отменено.");
             return;
         }
         final Uri uri = data.getData();
+        if (!hadContent) {
+            reportSave(callbackId, "error", "Данные для файла потеряны. Повторите экспорт.");
+            return;
+        }
         new Thread(() -> {
-            try (OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
+            try (InputStream in = new FileInputStream(source);
+                 OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
                 if (out == null) throw new IOException("Не удалось открыть файл для записи.");
-                out.write(content.getBytes(StandardCharsets.UTF_8));
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
                 out.flush();
                 reportSave(callbackId, "saved", "Файл сохранён.");
             } catch (Exception e) {
                 Log.e(TAG, "save failed", e);
                 reportSave(callbackId, "error", "Не удалось записать файл. Попробуйте выбрать другую папку.");
+            } finally {
+                source.delete();
             }
         }).start();
     }
 
     private void reportSave(String callbackId, String status, String message) {
+        if (callbackId == null) {
+            runOnUiThread(() -> Toast.makeText(this, message, Toast.LENGTH_LONG).show());
+            Log.i(TAG, "save result without page callback: " + status);
+            return;
+        }
         final String js = "window.__jarvisSaveResult&&window.__jarvisSaveResult("
                 + JSONObject.quote(callbackId) + "," + JSONObject.quote(status) + ","
                 + JSONObject.quote(message) + ")";

@@ -7,10 +7,14 @@
 // с ключом id. Записи реестра впервые пишутся на этапе 2.
 
 import { EDITABLE_FIELDS } from './config.js';
-import { validateFields } from './records.js';
+import { validateFields, restoreDraft } from './records.js';
 
 export const STORES = ['messages', 'records', 'meta'];
 export const META_NEXT_NUMBER = 'nextRecordNumber';
+// Черновики на проверке. Хранятся в базе, чтобы не пропасть, если Android
+// закроет приложение в фоне (например, при переключении на камеру).
+// В реестр они не входят, пока человек их не подтвердит.
+export const META_DRAFTS = 'pendingDrafts';
 
 export function createId() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
@@ -46,6 +50,17 @@ export function createMemoryAdapter() {
     async setMeta(key, value) {
       data.meta.set(key, { id: key, value });
     },
+    async commit(ops) {
+      // Сначала проверка всех операций, затем применение: как транзакция.
+      for (const op of ops) {
+        if (!data[op.store] || !['put', 'delete', 'clear'].includes(op.type)) throw new Error(`Неизвестная операция: ${op.type}`);
+      }
+      for (const op of ops) {
+        if (op.type === 'put') data[op.store].set(op.item.id, structuredClone(op.item));
+        else if (op.type === 'delete') data[op.store].delete(op.id);
+        else data[op.store].clear();
+      }
+    },
   };
 }
 
@@ -72,6 +87,10 @@ export function createStore(adapter, now = () => new Date()) {
     lastTime = t;
     return new Date(t).toISOString();
   }
+
+  // Черновики, уже ставшие записями: повторное сохранение списка черновиков
+  // (например, отложенное после правки) не должно вернуть их обратно.
+  const confirmedDrafts = new Set();
 
   // Операции с записями выполняются по очереди, чтобы номера не совпадали.
   let queue = Promise.resolve();
@@ -126,8 +145,18 @@ export function createStore(adapter, now = () => new Date()) {
         createdAt: time,
         updatedAt: time,
       };
-      await adapter.put('records', record);
-      await adapter.setMeta(META_NEXT_NUMBER, number + 1);
+      // Запись, счётчик и удаление черновика — одной транзакцией: после сбоя
+      // не останется ни записи без счётчика, ни подтверждённого черновика.
+      const pending = await readDrafts();
+      const ops = [
+        { type: 'put', store: 'records', item: record },
+        { type: 'put', store: 'meta', item: { id: META_NEXT_NUMBER, value: number + 1 } },
+      ];
+      if (draft.draftId && pending.some((d) => d.draftId === draft.draftId)) {
+        ops.push({ type: 'put', store: 'meta', item: { id: META_DRAFTS, value: pending.filter((d) => d.draftId !== draft.draftId) } });
+      }
+      await adapter.commit(ops);
+      if (draft.draftId) confirmedDrafts.add(draft.draftId);
       return record;
     });
   }
@@ -159,10 +188,30 @@ export function createStore(adapter, now = () => new Date()) {
   // заново, так как записей не остаётся.
   function clearHistory() {
     return serial(async () => {
-      await adapter.clear('messages');
-      await adapter.clear('records');
-      await adapter.setMeta(META_NEXT_NUMBER, 1);
+      await adapter.commit([
+        { type: 'clear', store: 'messages' },
+        { type: 'clear', store: 'records' },
+        { type: 'put', store: 'meta', item: { id: META_NEXT_NUMBER, value: 1 } },
+        { type: 'put', store: 'meta', item: { id: META_DRAFTS, value: [] } },
+      ]);
     });
+  }
+
+  // Черновики из базы. Повреждённые элементы пропускаются, а не ломают запуск.
+  async function readDrafts() {
+    const raw = await adapter.getMeta(META_DRAFTS);
+    if (!Array.isArray(raw)) return [];
+    return raw.map(restoreDraft).filter(Boolean);
+  }
+
+  function loadDrafts() {
+    return serial(readDrafts);
+  }
+
+  // Сохраняет текущий список черновиков (после разбора, правки, отклонения).
+  function saveDrafts(list) {
+    const value = list.map(restoreDraft).filter(Boolean);
+    return serial(() => adapter.setMeta(META_DRAFTS, value.filter((d) => !confirmedDrafts.has(d.draftId))));
   }
 
   async function counts() {
@@ -179,6 +228,8 @@ export function createStore(adapter, now = () => new Date()) {
     updateRecord,
     deleteRecord,
     clearHistory,
+    loadDrafts,
+    saveDrafts,
     counts,
     getMeta: (key) => adapter.getMeta(key),
     setMeta: (key, value) => adapter.setMeta(key, value),
