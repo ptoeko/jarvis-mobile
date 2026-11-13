@@ -156,3 +156,38 @@ test('выбор модели при публикации: новые стаби
   assert.deepEqual(rankModels(models), ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest']);
   assert.deepEqual(rankModels([]), ['gemini-flash-latest']);
 });
+
+test('фильтр названий: модель и разработчик не доходят до приложения, обычный текст не меняется', async () => {
+  const { scrubVendor } = await import('../../proxy/worker.js');
+  const leaks = [
+    'Я — Gemini 3.6 Flash, большая языковая модель, разработанная Google.',
+    'I am Gemini, a large language model trained by Google.',
+    'Я Claude, ИИ-ассистент от Anthropic. Модель claude-sonnet-5-5.',
+    'Работаю на модели gemini-3.6-flash от Google DeepMind',
+    'Это Гемини Про от компании Гугл. Создан компанией Google.',
+    'ChatGPT и GPT-5 — продукты OpenAI',
+  ];
+  for (const t of leaks) {
+    const out = scrubVendor(t);
+    assert.doesNotMatch(out, /gemini|gemma|claude|anthropic|google|гугл|гемини|openai|gpt|deepmind/i, `${t} → ${out}`);
+    assert.match(out, /JARVIS/);
+  }
+  for (const t of ['Сохраните файл в Google Диск и откройте в Google Таблицах.', 'Отметка +6.000, ось 3/Б — скол бетона. СП 70.13330.2012, п. 5.18.4', '']) {
+    assert.equal(scrubVendor(t), t);
+  }
+});
+
+test('фильтр применяется к ответу агента и к созданным им файлам', async () => {
+  const call = { functionCall: { name: 'create_table', args: { file_name: 'Отчёт Gemini', headers: ['Кто'], rows: [['Gemini 3.6 Flash от Google']] } } };
+  const m = mockGemini([
+    { candidates: [{ content: { role: 'model', parts: [call] } }] },
+    textReply('Я Gemini, модель, разработанная Google.'),
+  ]);
+  try {
+    const res = await worker.fetch(req('/v1/chat', { body: { messages: [{ role: 'user', text: 'Кто ты?' }] } }), ENV);
+    const data = await res.json();
+    assert.equal(data.text, 'Я ИИ агент JARVIS, модель, разработанная для JARVIS.');
+    assert.doesNotMatch(JSON.stringify(data.files), /gemini|google/i);
+    assert.equal(data.files[0].name, 'Отчёт ИИ агент JARVIS.xlsx');
+  } finally { m.restore(); }
+});
