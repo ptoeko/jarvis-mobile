@@ -1,5 +1,11 @@
 // Посредник «ИИ агент» для JARVIS Mobile (Cloudflare Worker).
 //
+// Поставщик ИИ выбирается на посреднике, приложение об этом не знает:
+//   • Gemini — если задан секрет GEMINI_API_KEY (или PROVIDER = "gemini");
+//   • Anthropic — если задан ANTHROPIC_API_KEY (или PROVIDER = "anthropic").
+// Внутри посредника переписка хранится в одном формате; для Gemini запрос и
+// ответ переводятся переходником (toGeminiRequest / fromGeminiResponse).
+//
 // Зачем: ключ доступа к ИИ нельзя хранить в приложении — его можно извлечь из
 // APK. Ключ хранится здесь как секрет; приложение предъявляет только свой код
 // доступа. Посредник:
@@ -16,6 +22,8 @@
 //   POST /v1/parse  — заметки → поля реестра: { notes: [текст] } → { items: [{ поля }] }.
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+const GEMINI_DEFAULT_MODEL = 'gemini-flash-latest';
 const API_VERSION = '2023-06-01';
 const MAX_BODY = 30 * 1024 * 1024; // предел запроса к ИИ — около 32 МБ
 const MAX_MESSAGES = 30;
@@ -110,9 +118,20 @@ export function sameCode(a, b) {
   return diff === 0;
 }
 
+// Какой поставщик ИИ используется.
+export function providerOf(env) {
+  const p = String(env.PROVIDER || '').trim().toLowerCase();
+  if (p === 'gemini' || p === 'anthropic') return p;
+  return env.GEMINI_API_KEY ? 'gemini' : 'anthropic';
+}
+
+function apiKeyOf(env) {
+  return providerOf(env) === 'gemini' ? env.GEMINI_API_KEY : env.ANTHROPIC_API_KEY;
+}
+
 function checkAccess(request, env) {
   if (!env.ACCESS_CODE || String(env.ACCESS_CODE).length < 16) throw new HttpError(503, 'Посредник не настроен: не задан код доступа.');
-  if (!env.ANTHROPIC_API_KEY) throw new HttpError(503, 'Посредник не настроен: не задан ключ ИИ.');
+  if (!apiKeyOf(env)) throw new HttpError(503, 'Посредник не настроен: не задан ключ ИИ.');
   const auth = request.headers.get('Authorization') || '';
   const code = auth.startsWith('Bearer ') ? auth.slice(7) : '';
   if (!code || !sameCode(code, env.ACCESS_CODE)) throw new HttpError(401, 'Неверный код доступа.');
@@ -164,7 +183,111 @@ export function toModelMessages(messages) {
   return out;
 }
 
+// ---------- Переходник Gemini ----------
+
+// Внутренний запрос { system, tools, messages, max_tokens, json } → запрос Gemini.
+export function toGeminiRequest(body) {
+  const names = new Map(); // id вызова инструмента → его имя
+  const contents = [];
+  for (const m of body.messages || []) {
+    const role = m.role === 'assistant' ? 'model' : 'user';
+    const blocks = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content || [];
+    const parts = [];
+    for (const b of blocks) {
+      if (b.geminiPart) {
+        // Часть ответа Gemini возвращается без изменений (с подписью рассуждения).
+        if (b.type === 'tool_use') names.set(b.id, b.name);
+        parts.push(b.geminiPart);
+      } else if (b.type === 'text') {
+        if (b.text) parts.push({ text: b.text });
+      } else if (b.type === 'image' || b.type === 'document') {
+        parts.push({ inlineData: { mimeType: b.source?.media_type, data: b.source?.data } });
+        if (b.type === 'document' && b.title) parts.push({ text: `[Документ: ${b.title}]` });
+      } else if (b.type === 'tool_use') {
+        names.set(b.id, b.name);
+        parts.push({ functionCall: { name: b.name, args: b.input || {} } });
+      } else if (b.type === 'tool_result') {
+        const content = typeof b.content === 'string' ? b.content : textOf(b.content);
+        parts.push({ functionResponse: { name: names.get(b.tool_use_id) || 'tool', response: { result: content, ...(b.is_error ? { error: true } : {}) } } });
+      }
+    }
+    if (parts.length) contents.push({ role, parts });
+  }
+  const request = {
+    contents,
+    // Модели с рассуждением тратят часть лимита на рассуждение — запас сверху.
+    generationConfig: { maxOutputTokens: (body.max_tokens || 4000) + 8192 },
+  };
+  if (body.system) request.systemInstruction = { parts: [{ text: body.system }] };
+  if (body.json) request.generationConfig.responseMimeType = 'application/json';
+  if (Array.isArray(body.tools) && body.tools.length) {
+    request.tools = [{ functionDeclarations: body.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema })) }];
+  }
+  return request;
+}
+
+// Ответ Gemini → внутренний ответ { content: [блоки], stop_reason }.
+export function fromGeminiResponse(data) {
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  const content = [];
+  let calls = 0;
+  for (const part of parts) {
+    if (part.thought) continue; // служебное рассуждение не показывается
+    if (part.functionCall) {
+      calls++;
+      content.push({ type: 'tool_use', id: `call-${calls}`, name: part.functionCall.name, input: part.functionCall.args || {}, geminiPart: part });
+    } else if (typeof part.text === 'string' && part.text) {
+      content.push({ type: 'text', text: part.text, geminiPart: part });
+    }
+  }
+  return { content, stop_reason: calls ? 'tool_use' : 'end_turn' };
+}
+
+async function geminiError(response) {
+  const s = response.status;
+  let detail = '';
+  try {
+    const e = (await response.json())?.error || {};
+    detail = `${e.status || ''} ${e.message || ''}`;
+  } catch {
+    detail = '';
+  }
+  // Текст ошибки поставщика не пересылается: в нём его название.
+  if (/location is not supported|not available in your (country|region)/i.test(detail)) {
+    return new HttpError(502, 'ИИ агент недоступен из региона, где сейчас работает посредник. Повторите позже; если ошибка повторяется — сообщите разработчику.');
+  }
+  if (/api key|API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED/i.test(detail) || s === 401 || s === 403) {
+    return new HttpError(502, 'Посредник: ключ ИИ недействителен. Проверьте ключ.');
+  }
+  if (s === 429 || /RESOURCE_EXHAUSTED|quota/i.test(detail)) {
+    return new HttpError(429, 'Исчерпан лимит запросов ИИ агента (бесплатный лимит в минуту или в день). Повторите позже.');
+  }
+  if (s === 404) return new HttpError(502, 'Посредник: модель ИИ недоступна. Запустите публикацию посредника ещё раз.');
+  if (s === 400 || s === 413) return new HttpError(400, 'ИИ агент не принял запрос: возможно, файл слишком большой или неподдерживаемый.');
+  return new HttpError(502, 'ИИ агент временно перегружен. Повторите через минуту.');
+}
+
+async function callGemini(env, body) {
+  const model = String(env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL).replace(/^models\//, '');
+  let response;
+  try {
+    response = await fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+      body: JSON.stringify(toGeminiRequest(body)),
+    });
+  } catch {
+    throw new HttpError(502, 'ИИ агент недоступен. Повторите позже.');
+  }
+  if (!response.ok) throw await geminiError(response);
+  return fromGeminiResponse(await response.json());
+}
+
+// ---------- Вызов ИИ ----------
+
 async function callModel(env, body) {
+  if (providerOf(env) === 'gemini') return callGemini(env, body);
+  const { json: _json, ...anthropicBody } = body; // json — подсказка только для Gemini
   let response;
   try {
     response = await fetch(API_URL, {
@@ -174,7 +297,7 @@ async function callModel(env, body) {
         'x-api-key': env.ANTHROPIC_API_KEY,
         'anthropic-version': API_VERSION,
       },
-      body: JSON.stringify({ model: env.MODEL || 'claude-sonnet-5-5', ...body }),
+      body: JSON.stringify({ model: env.MODEL || 'claude-sonnet-5-5', ...anthropicBody }),
     });
   } catch {
     throw new HttpError(502, 'ИИ агент недоступен. Повторите позже.');
@@ -283,6 +406,7 @@ async function handleParse(env, data) {
   const list = notes.map((n, i) => `Заметка ${i + 1}:\n${n.slice(0, 4000)}`).join('\n\n');
   const result = await callModel(env, {
     max_tokens: 4000,
+    json: true,
     system: PARSE_SYSTEM,
     messages: [{ role: 'user', content: list }],
   });

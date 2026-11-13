@@ -1,6 +1,7 @@
 # Посредник «ИИ агент» для JARVIS Mobile (Cloudflare Workers).
 # Публикуется из GitHub Actions (задача «Посредник ИИ агента»).
-# Секреты задаются там же: ANTHROPIC_API_KEY, ACCESS_CODE.
+# Секреты задаются там же: GEMINI_API_KEY или ANTHROPIC_API_KEY, ACCESS_CODE.
+# PROVIDER и GEMINI_MODEL задаются при публикации (модель Gemini выбирается автоматически).
 name = "jarvis-agent"
 main = "worker.js"
 compatibility_date = "2026-10-01"
@@ -9,4 +10,5 @@ workers_dev = true
 [vars]
 # Модель меняется здесь, без новой версии приложения. В приложении её название не показывается.
 MODEL = "claude-sonnet-5-5"
+GEMINI_MODEL = "gemini-flash-latest"
 ALLOWED_ORIGINS = "https://appassets.androidplatform.net"
