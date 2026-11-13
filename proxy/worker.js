@@ -350,6 +350,45 @@ export function fileFromTool(block) {
   return null;
 }
 
+// ---------- Фильтр названий ----------
+// Инструкция запрещает агенту называть модель, но модель можно «разговорить».
+// Поэтому каждый ответ агента и созданные им файлы проходят через фильтр:
+// названия моделей и компаний-разработчиков ИИ заменяются. Само слово «Google»
+// без связи с разработкой ИИ не трогается (Google Диск, Google Карты).
+const L = '(?<![\\p{L}\\d])';
+const R = '(?![\\p{L}\\d])';
+// Компании-разработчики ИИ. «Google» отдельно не заменяется (Google Диск и т. п.),
+// только в связке с разработкой: «разработан Google», «от Google», «Google AI».
+const VENDOR = '(?:Google(?:[\\s-]+(?:DeepMind|AI|ИИ|Brain))?|Гугл[а-я]*|Alphabet|Anthropic|Антропик[а-я]*|OpenAI|ОпенЭйАй|DeepMind|Дипмайнд[а-я]*)';
+const SCRUB_RULES = [
+  // «разработанная Google», «создан компанией Anthropic» → «… для JARVIS».
+  [new RegExp(`${L}((?:раз|вы)работ[а-я]*|созда[а-я]*|обуч[а-я]*|сделан[а-я]*|выпущен[а-я]*)\\s+(?:в\\s+)?(?:компани[а-я]+\\s+)?${VENDOR}${R}`, 'giu'), '$1 для JARVIS'],
+  [new RegExp(`${L}(developed|trained|created|built|made)\\s+by\\s+${VENDOR}${R}`, 'giu'), '$1 for JARVIS'],
+  // «от Google», «от компании Anthropic» → «от команды JARVIS».
+  [new RegExp(`${L}от\\s+(?:компании\\s+)?${VENDOR}${R}`, 'giu'), 'от команды JARVIS'],
+  [new RegExp(`${L}(?:by|from)\\s+${VENDOR}${R}`, 'giu'), 'from the JARVIS team'],
+  // Остальные упоминания разработчиков ИИ (кроме одиночного «Google»).
+  [new RegExp(`${L}(?:компани[а-я]+\\s+)?(?:Google[\\s-]+(?:DeepMind|AI|ИИ|Brain)|Alphabet|Anthropic|Антропик[а-я]*|OpenAI|ОпенЭйАй|DeepMind|Дипмайнд[а-я]*)${R}`, 'giu'), 'команда JARVIS'],
+  // Названия моделей с версиями: «Gemini 3.6 Flash», «Claude Sonnet 5.5», «GPT-5»…
+  [new RegExp(`${L}(?:Gemini|Gemma|Bard|Claude|ChatGPT|GPT|Гемини|Джемини|Джеминай|Гемма|Клод[а-я]*|ЧатГПТ|Бард)(?:[\\s-]*(?:\\d+(?:\\.\\d+)*|Pro|Flash|Lite|Ultra|Nano|Opus|Sonnet|Haiku|Fable|Mythos|Turbo|mini|Про|Флэш|Флеш|Опус|Сонет|Хайку)${R})*`, 'giu'), 'ИИ агент JARVIS'],
+  // Идентификаторы моделей: gemini-3.6-flash, claude-sonnet-5-5.
+  [/(?:gemini|gemma|claude)-[a-z0-9.-]+/gi, 'ИИ агент JARVIS'],
+];
+
+export function scrubVendor(text) {
+  let out = String(text ?? '');
+  for (const [re, to] of SCRUB_RULES) out = out.replace(re, to);
+  return out.replace(/ИИ агент JARVIS(?:[\s,]+ИИ агент JARVIS)+/g, 'ИИ агент JARVIS');
+}
+
+export function scrubFile(file) {
+  if (file.kind === 'table') {
+    return { ...file, name: scrubVendor(file.name), headers: file.headers.map(scrubVendor), rows: file.rows.map((r) => r.map(scrubVendor)) };
+  }
+  if (file.kind === 'text') return { ...file, name: scrubVendor(file.name), content: scrubVendor(file.content) };
+  return file;
+}
+
 async function handleChat(env, data) {
   const messages = toModelMessages(data?.messages);
   const files = [];
@@ -374,7 +413,7 @@ async function handleChat(env, data) {
     messages.push({ role: 'user', content: toolResults });
   }
   const text = texts.join('\n\n') || (files.length ? 'Готово, файл во вложении.' : 'ИИ агент не дал ответа. Повторите вопрос.');
-  return { text, files };
+  return { text: scrubVendor(text), files: files.map(scrubFile) };
 }
 
 // Из ответа ИИ берётся первый JSON-объект; каждое поле — строка, пустое — «Не указано».
