@@ -228,7 +228,9 @@ test('в приложении нигде нет названий модели и
 test('посредник обращается только к API ИИ, ключ — только из секрета', () => {
   const worker = readFileSync(join(ROOT, 'proxy', 'worker.js'), 'utf8');
   const hosts = [...worker.matchAll(/https:\/\/([a-z0-9.-]+)/gi)].map((m) => m[1]);
-  assert.deepEqual([...new Set(hosts)], ['api.anthropic.com']);
+  assert.deepEqual([...new Set(hosts)].sort(), ['api.anthropic.com', 'generativelanguage.googleapis.com']);
   assert.match(worker, /env\.ANTHROPIC_API_KEY/);
+  assert.match(worker, /env\.GEMINI_API_KEY/);
   assert.doesNotMatch(worker, /sk-ant-[A-Za-z0-9_-]{10,}/);
+  assert.doesNotMatch(worker, /AIza[0-9A-Za-z_-]{20,}/);
 });
