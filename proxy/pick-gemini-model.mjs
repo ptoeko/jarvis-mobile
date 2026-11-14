@@ -94,13 +94,15 @@ async function main() {
   const all = await listModels(key);
   const imageModel = rankImageModels(all)[0] || '';
   console.error(`Модель изображений: ${imageModel || 'нет'}`);
-  const ranked = rankModels(all).slice(0, 6);
+  const ranked = rankModels(all).slice(0, 8);
   console.error(`Кандидаты: ${ranked.join(', ')}`);
   for (const name of ranked) {
     const r = await tryModel(key, name);
     console.error(`${name}: HTTP ${r.status}${r.ok ? '' : ` ${r.detail}`}`);
     if (r.ok) {
-      process.stdout.write(JSON.stringify({ model: name, imageModel }));
+      // Запасные — остальные кандидаты: у каждой модели свой бесплатный лимит.
+      const fallback = ranked.filter((m) => m !== name);
+      process.stdout.write(JSON.stringify({ model: name, fallback, imageModel }));
       return;
     }
     if (/location is not supported/i.test(r.detail)) throw new Error('Gemini API недоступен из региона сервера сборки.');
@@ -108,7 +110,7 @@ async function main() {
   }
   // Ни одна модель не ответила (например, исчерпан дневной лимит) — берём первую.
   console.error('Ни одна модель не ответила сейчас; выбрана первая по списку.');
-  process.stdout.write(JSON.stringify({ model: ranked[0], imageModel }));
+  process.stdout.write(JSON.stringify({ model: ranked[0], fallback: ranked.slice(1), imageModel }));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

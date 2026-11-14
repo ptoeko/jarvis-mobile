@@ -200,3 +200,38 @@ test('выбор модели изображений: flash выше pro, ста
   assert.deepEqual(rankImageModels(models), ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-image-preview', 'gemini-3.1-pro-image-preview']);
   assert.deepEqual(rankImageModels([]), []);
 });
+
+test('запасные модели: при исчерпанном лимите или перегрузке — следующая модель, в ответе с инструментами — та же модель', async () => {
+  const { geminiModels } = await import('../../proxy/worker.js');
+  assert.deepEqual(geminiModels({ GEMINI_MODEL: 'a', GEMINI_FALLBACK_MODELS: 'b, models/c,a,' }), ['a', 'b', 'c']);
+  assert.deepEqual(geminiModels({}), ['gemini-flash-latest']);
+  const env = { ...ENV, GEMINI_MODEL: 'm1', GEMINI_FALLBACK_MODELS: 'm2,m3' };
+  const call = { functionCall: { name: 'create_text_file', args: { file_name: 'x', content: 'y' } } };
+  const m = mockGemini([
+    { status: 429, body: { error: { status: 'RESOURCE_EXHAUSTED', message: 'quota' } } },
+    { status: 503, body: { error: { status: 'UNAVAILABLE', message: 'overloaded' } } },
+    { candidates: [{ content: { parts: [call] } }] },
+    textReply('Готово.'),
+  ]);
+  try {
+    const res = await worker.fetch(req('/v1/chat', { body: { messages: [{ role: 'user', text: 'x' }] } }), env);
+    assert.equal((await res.json()).text, 'Готово.');
+    assert.deepEqual(m.calls.map((c) => c.url.split('/').pop()), ['m1:generateContent', 'm2:generateContent', 'm3:generateContent', 'm3:generateContent']);
+  } finally { m.restore(); }
+});
+
+test('запасные модели: неверный ключ не перебирает модели; все исчерпаны — понятная ошибка', async () => {
+  const env = { ...ENV, GEMINI_MODEL: 'm1', GEMINI_FALLBACK_MODELS: 'm2' };
+  let m = mockGemini([{ status: 400, body: { error: { status: 'INVALID_ARGUMENT', message: 'API key not valid' } } }]);
+  try {
+    const res = await worker.fetch(req('/v1/chat', { body: { messages: [{ role: 'user', text: 'x' }] } }), env);
+    assert.match((await res.json()).error, /ключ ИИ недействителен/);
+    assert.equal(m.calls.length, 1);
+  } finally { m.restore(); }
+  m = mockGemini([429, 429].map(() => ({ status: 429, body: { error: { status: 'RESOURCE_EXHAUSTED', message: 'quota' } } })));
+  try {
+    const res = await worker.fetch(req('/v1/chat', { body: { messages: [{ role: 'user', text: 'x' }] } }), env);
+    assert.equal(res.status, 429);
+    assert.match((await res.json()).error, /лимит/);
+  } finally { m.restore(); }
+});
