@@ -34,7 +34,7 @@ jobs:
           python-version: '3.12'
       - name: Установка Chromium, LibreOffice и библиотек для тестов
         run: |
-          pip install playwright openpyxl
+          pip install playwright openpyxl python-docx
           python -m playwright install --with-deps chromium
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libreoffice-calc
@@ -50,6 +50,7 @@ jobs:
           $R "Сквозные тесты: 0.4.1 (Excel)" python tests/e2e/test_v041.py e2e-out/v041
           $R "Сквозные тесты: 0.4.2 (Поделиться)" python tests/e2e/test_v042.py e2e-out/v042
           $R "Сквозные тесты: 0.5.0 (ИИ агент)" python tests/e2e/test_v050.py e2e-out/v050
+          $R "Сквозные тесты: 0.6.0 (переписка, Word, Excel, изображения)" python tests/e2e/test_v060.py e2e-out/v060
       - name: Скриншоты и файлы тестов
         if: always()
         uses: actions/upload-artifact@v4

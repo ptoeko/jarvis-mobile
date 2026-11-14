@@ -5,6 +5,8 @@ import { validateMessage } from './core/validate.js';
 import { demoReply, draftsReply } from './core/demo.js';
 import { createStore, createMemoryAdapter, RecordError } from './core/store.js';
 import { createIdbAdapter } from './core/idb.js';
+import { documentText, canRead } from './core/docread.js';
+import { buildDocx, DOCX_MIME } from './core/docx.js';
 import { createAiClient, AiError, normalizeAgentUrl, validAccessCode, blobToBase64, META_AI_URL, META_AI_CODE, AI_LABEL } from './core/ai.js';
 import { computeFeatures, statusSummary, STATE_LABELS } from './core/status.js';
 import { parseMessage } from './core/parse.js';
@@ -169,6 +171,7 @@ function showScreen(name) {
   for (const section of document.querySelectorAll('.screen')) {
     section.hidden = section.dataset.screen !== target;
   }
+  $('dialog-menu-btn').hidden = target !== 'dialog';
   for (const tab of document.querySelectorAll('.tab')) {
     if (tab.dataset.target === target) tab.setAttribute('aria-current', 'page');
     else tab.removeAttribute('aria-current');
@@ -331,6 +334,22 @@ function copyIcon() {
   return svg;
 }
 
+// Ссылки в тексте становятся нажимаемыми; остальной текст — только текстом.
+// В APK ссылка открывается во внешнем браузере (оболочка Android).
+const URL_RE = /https?:\/\/[^\s<>"«»]+/g;
+function linkify(text) {
+  const nodes = [];
+  let last = 0;
+  for (const m of String(text).matchAll(URL_RE)) {
+    let url = m[0].replace(/[.,;:!?)\]]+$/, '');
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    nodes.push(el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, url));
+    last = m.index + url.length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+
 // ---------- Диалог ----------
 function messageElement(message) {
   const meta = el('div', { className: 'msg-meta' });
@@ -362,7 +381,7 @@ function messageElement(message) {
     meta.append(share);
   }
   const item = el('li', { className: `msg msg-${message.role}`, dataset: { source: message.source, id: message.id } }, meta);
-  if (message.text) item.append(el('div', { className: 'msg-text' }, message.text));
+  if (message.text) item.append(el('div', { className: 'msg-text' }, ...linkify(message.text)));
   const refs = attachmentRefs(message.attachments);
   if (refs.length) item.append(attachmentList(refs));
   return item;
@@ -374,6 +393,99 @@ async function renderMessages() {
   $('messages').replaceChildren(...messages.map(messageElement));
   $('messages-empty').hidden = messages.length > 0;
   $('main').scrollTop = $('main').scrollHeight;
+}
+
+// ---------- Переписка: новый диалог, архив, удаление ----------
+function plural(n, one, few, many) {
+  const a = n % 10, b = n % 100;
+  if (a === 1 && b !== 11) return one;
+  if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return few;
+  return many;
+}
+
+async function openDialogMenu() {
+  const archives = await store.listArchives();
+  $('dialog-menu-list').textContent = archives.length ? `Архив переписок (${archives.length})` : 'Архив переписок';
+  const choice = await ask($('dialog-menu'));
+  if (choice === 'archive') await archiveCurrentDialog();
+  else if (choice === 'list') await openArchiveList();
+  else if (choice === 'delete') await deleteCurrentDialog();
+}
+
+async function archiveCurrentDialog() {
+  try {
+    const entry = await store.archiveDialog();
+    await renderMessages();
+    toast(`Переписка сохранена в архив: ${entry.count} ${plural(entry.count, 'сообщение', 'сообщения', 'сообщений')}. Начат новый диалог.`);
+  } catch (e) {
+    toast(e instanceof RecordError ? e.message : 'Не удалось сохранить переписку в архив. Повторите.');
+  }
+}
+
+async function deleteCurrentDialog() {
+  const count = (await store.listMessages()).length;
+  if (count === 0) {
+    toast('Переписка пуста — удалять нечего.');
+    return;
+  }
+  $('confirm-dialog-delete-title').textContent = 'Удалить переписку?';
+  $('confirm-dialog-delete-text').textContent = `Будут удалены ${count} ${plural(count, 'сообщение', 'сообщения', 'сообщений')} текущего диалога и их файлы. Восстановить их будет нельзя. Реестр, черновики и файлы, приложенные к записям реестра, останутся. Архив не затрагивается.`;
+  if ((await ask($('confirm-dialog-delete'))) !== 'delete') return;
+  try {
+    await store.deleteDialog();
+    await renderMessages();
+    toast('Переписка удалена');
+  } catch (e) {
+    console.error(e);
+    toast('Не удалось удалить переписку. Повторите.');
+  }
+}
+
+function formatDate(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+async function renderArchiveList() {
+  const archives = await store.listArchives();
+  $('archive-empty').hidden = archives.length > 0;
+  $('archive-items').replaceChildren(...archives.map((a) => {
+    const button = el('button', { type: 'button', className: 'archive-item', dataset: { archive: a.id } },
+      el('span', { className: 'archive-item-title' }, a.title),
+      el('span', { className: 'archive-item-meta' }, `${formatDate(a.createdAt)} · ${a.count} ${plural(a.count, 'сообщение', 'сообщения', 'сообщений')}`));
+    button.addEventListener('click', () => openArchive(a));
+    return el('li', {}, button);
+  }));
+}
+
+async function openArchiveList() {
+  await renderArchiveList();
+  $('archive-list').showModal();
+}
+
+let openArchiveId = null;
+async function openArchive(entry) {
+  openArchiveId = entry.id;
+  const messages = await store.listArchiveMessages(entry.id);
+  $('archive-view-title').textContent = entry.title;
+  $('archive-view-meta').textContent = `Сохранено в архив ${formatDate(entry.archivedAt)}. Только просмотр: агент эту переписку не видит.`;
+  $('archive-messages').replaceChildren(...messages.map(messageElement));
+  $('archive-view').showModal();
+}
+
+async function deleteOpenArchive() {
+  if (!openArchiveId) return;
+  $('confirm-dialog-delete-title').textContent = 'Удалить переписку из архива?';
+  $('confirm-dialog-delete-text').textContent = 'Сообщения этой переписки и их файлы будут удалены с телефона. Восстановить их будет нельзя. Реестр и файлы, приложенные к записям реестра, останутся.';
+  if ((await ask($('confirm-dialog-delete'))) !== 'delete') return;
+  try {
+    await store.deleteArchive(openArchiveId);
+    $('archive-view').close('deleted');
+    await renderArchiveList();
+    toast('Переписка удалена из архива');
+  } catch (e) {
+    toast(e instanceof RecordError ? e.message : 'Не удалось удалить переписку. Повторите.');
+  }
 }
 
 function setComposerError(text) {
@@ -428,6 +540,20 @@ function clearComposer() {
 const HISTORY_LIMIT = 20; // сколько последних сообщений видит агент
 const MAX_IMAGE_SIDE = 1568; // фото уменьшается до такого размера стороны
 const MAX_PDF = 10 * 1024 * 1024;
+// Сколько всего передаётся агенту за один запрос: текст документов Word/Excel
+// и PDF из последних сообщений (новые — в первую очередь).
+const DOC_TEXT_BUDGET = 400000; // символов
+const PDF_BUDGET = 14 * 1024 * 1024; // байт
+
+// Текст документов кешируется на время работы приложения (файлы не меняются).
+const docTextCache = new Map();
+async function cachedDocumentText(ref) {
+  if (docTextCache.has(ref.id)) return docTextCache.get(ref.id);
+  const item = await store.getAttachment(ref.id);
+  const result = item?.blob ? await documentText(item.blob, ref.name) : { error: 'Файл не найден на телефоне.' };
+  docTextCache.set(ref.id, result);
+  return result;
+}
 
 // Фото уменьшается перед отправкой агенту (меньше трафика и расходов).
 // Если браузер не может открыть формат (например, HEIC) — передаётся только название.
@@ -447,16 +573,36 @@ async function imageForAgent(blob) {
   }
 }
 
-// Файлы последнего сообщения пользователя передаются содержимым (фото, PDF),
-// у остальных сообщений — только названия: так меньше трафика и расходов.
-async function agentFiles(refs, withContent) {
+// Что агент получает из файлов:
+// • фото — только из последнего сообщения пользователя (уменьшенное);
+// • PDF — из последних сообщений, пока не исчерпан общий объём PDF_BUDGET;
+// • Word, Excel, CSV, TXT — текстом из последних сообщений, пока не исчерпан
+//   DOC_TEXT_BUDGET (чтобы агент мог объединить несколько отчётов, присланных
+//   разными сообщениями);
+// • видео и остальное — только название.
+async function agentFiles(refs, isLastUser, budget) {
   const out = [];
   for (const ref of refs) {
     const file = { name: ref.name, type: ref.type };
-    if (withContent) {
+    if (ref.kind === 'photo' && isLastUser) {
       const item = await store.getAttachment(ref.id);
-      if (item?.blob && ref.kind === 'photo') Object.assign(file, (await imageForAgent(item.blob)) || {});
-      else if (item?.blob && ref.type === 'application/pdf' && item.blob.size <= MAX_PDF) file.data = await blobToBase64(item.blob);
+      if (item?.blob) Object.assign(file, (await imageForAgent(item.blob)) || {});
+    } else if (ref.type === 'application/pdf' && ref.size <= MAX_PDF && ref.size <= budget.pdf) {
+      const item = await store.getAttachment(ref.id);
+      if (item?.blob) {
+        file.data = await blobToBase64(item.blob);
+        budget.pdf -= ref.size;
+      }
+    } else if (canRead(ref.name) || /\.(doc|xls|rtf)$/i.test(ref.name)) {
+      const r = await cachedDocumentText(ref);
+      if (r.text && r.text.length <= budget.text) {
+        file.text = r.text;
+        budget.text -= r.text.length;
+      } else if (r.text) {
+        file.note = 'Файл не передан: превышен объём документов в одном запросе. Попросите прислать его отдельно в новом сообщении.';
+      } else {
+        file.note = r.error;
+      }
     }
     out.push(file);
   }
@@ -466,22 +612,43 @@ async function agentFiles(refs, withContent) {
 async function agentHistory() {
   const messages = (await store.listMessages()).slice(-HISTORY_LIMIT);
   const lastUser = [...messages].reverse().find((m) => m.role === 'user');
-  const history = [];
-  for (const m of messages) {
-    history.push({
-      role: m.role,
-      text: m.text,
-      files: await agentFiles(attachmentRefs(m.attachments), m === lastUser),
-    });
+  const budget = { text: DOC_TEXT_BUDGET, pdf: PDF_BUDGET };
+  // Файлы читаются от новых сообщений к старым: новым — приоритет в объёме.
+  const filesByMessage = new Map();
+  for (const m of [...messages].reverse()) {
+    filesByMessage.set(m.id, await agentFiles(m.role === 'user' ? attachmentRefs(m.attachments) : [], m === lastUser, budget));
   }
-  return history;
+  return messages.map((m) => ({
+    role: m.role,
+    text: m.text,
+    files: m.role === 'user' ? filesByMessage.get(m.id) : attachmentRefs(m.attachments).map((r) => ({ name: r.name, type: r.type })),
+  }));
 }
 
-// Файлы, созданные агентом: таблица → Excel, текст → .txt.
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+const IMAGE_REPLY_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+// Файлы, созданные агентом: таблица → Excel, документ → Word, изображение,
+// текст → .txt.
 async function agentReplyFiles(files) {
   const out = [];
   for (const f of files.slice(0, 5)) {
-    if (f?.kind === 'table' && Array.isArray(f.headers)) {
+    if (f?.kind === 'word' && Array.isArray(f.blocks)) {
+      const blob = await buildDocx(f);
+      out.push(new File([blob], String(f.name || 'документ.docx'), { type: DOCX_MIME }));
+    } else if (f?.kind === 'image' && typeof f.data === 'string' && IMAGE_REPLY_TYPES.has(f.type)) {
+      try {
+        out.push(new File([base64ToBytes(f.data)], String(f.name || 'изображение.png'), { type: f.type }));
+      } catch {
+        // повреждённые данные изображения пропускаются
+      }
+    } else if (f?.kind === 'table' && Array.isArray(f.headers)) {
       const blob = await tableToXlsx(f.headers, Array.isArray(f.rows) ? f.rows : [], { title: f.name });
       out.push(new File([blob], String(f.name || 'таблица.xlsx'), { type: XLSX_MIME }));
     } else if (f?.kind === 'text' && typeof f.content === 'string' && f.content) {
@@ -1177,6 +1344,12 @@ async function start() {
   });
 
   $('delete-history').addEventListener('click', handleDeleteHistory);
+  $('dialog-menu-btn').addEventListener('click', openDialogMenu);
+  $('archive-delete').addEventListener('click', deleteOpenArchive);
+  $('archive-view').addEventListener('close', () => {
+    openArchiveId = null;
+    $('archive-messages').replaceChildren();
+  });
   $('attach-input').accept = ACCEPT;
   // Скрепка: меню «Снять фото / Снять видео / Выбрать файл». Окно выбора
   // открывается прямо в обработчике нажатия — иначе Android его не покажет.

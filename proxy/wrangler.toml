@@ -11,4 +11,5 @@ workers_dev = true
 # Модель меняется здесь, без новой версии приложения. В приложении её название не показывается.
 MODEL = "claude-sonnet-5-5"
 GEMINI_MODEL = "gemini-flash-latest"
+GEMINI_IMAGE_MODEL = ""
 ALLOWED_ORIGINS = "https://appassets.androidplatform.net"

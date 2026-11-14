@@ -27,7 +27,8 @@ const GEMINI_DEFAULT_MODEL = 'gemini-flash-latest';
 const API_VERSION = '2023-06-01';
 const MAX_BODY = 30 * 1024 * 1024; // предел запроса к ИИ — около 32 МБ
 const MAX_MESSAGES = 30;
-const MAX_TOOL_ROUNDS = 3;
+const MAX_TOOL_ROUNDS = 6;
+const MAX_SOURCES = 8;
 
 const FIELDS = ['date', 'object', 'location', 'workType', 'description', 'requirement', 'responsible', 'deadline', 'status'];
 const NOT_SPECIFIED = 'Не указано';
@@ -42,8 +43,14 @@ const CHAT_SYSTEM = [
   IDENTITY,
   'Помогаешь с замечаниями при обходе, исполнительной документацией, сравнением факта с проектом, нормами, письмами и отчётами.',
   'Не выдумывай номера норм, пунктов и значения допусков. Если не уверен — так и скажи и предложи проверить по действующей редакции документа.',
-  'Если пользователь просит таблицу, ведомость, реестр или перечень — создай файл инструментом create_table. Если просит документ, письмо, акт, отчёт или текстовый файл — используй create_text_file. Файл появится во вложении к твоему ответу; в тексте кратко скажи, что в нём.',
-  'Фото и PDF из сообщений тебе видны. Word, Excel и видео видны только по названию — если нужно их содержание, попроси пересказать или прислать PDF или фото.',
+  'Файлы создавай инструментами, они появятся во вложении к ответу; в тексте кратко скажи, что в файле:',
+  '• таблица, ведомость, реестр, перечень, график — create_table (Excel);',
+  '• отчёт, сводный отчёт, письмо, акт, протокол, служебная записка, любой документ Word — create_word_document. Используй заголовки, абзацы, списки и таблицы; для широких таблиц — альбомная ориентация;',
+  '• простой текстовый файл (.txt) — create_text_file, только если пользователь просит именно текстовый файл.',
+  'Сводный отчёт из нескольких присланных отчётов: возьми данные из каждого документа, сгруппируй по объектам (зданиям) и разделам, сохрани все числа, даты и единицы измерения как в исходниках, ничего не придумывай; если данные расходятся — укажи это в документе. Не сокращай содержание без просьбы.',
+  'Поиск в интернете — web_search: когда спрашивают про актуальное (новости, цены, курсы, действующие редакции норм, контакты, события) или просят «найди». После поиска отвечай по найденному и в конце перечисли источники со ссылками. Если не нашёл — так и скажи.',
+  'Изображение (схема, эскиз, иллюстрация, картинка) — create_image с подробным описанием на английском языке. Это иллюстрация, а не рабочий чертёж: размеры на ней не точны — предупреди об этом, если просят чертёж.',
+  'Тебе видны: фото из последнего сообщения, PDF и текст документов Word и Excel из последних сообщений (документ приходит между метками [Документ: …] и [Конец документа: …]). Видео видно только по названию. Если содержимое файла не передано — в скобках указана причина; объясни её пользователю.',
 ].join('\n');
 
 const PARSE_SYSTEM = [
@@ -81,6 +88,59 @@ const TOOLS = [
     },
   },
 ];
+
+const BLOCK_SCHEMA = {
+  type: 'object',
+  properties: {
+    type: { type: 'string', enum: ['heading', 'paragraph', 'bullets', 'numbered', 'table', 'page_break'], description: 'Вид блока' },
+    text: { type: 'string', description: 'Текст заголовка или абзаца' },
+    level: { type: 'integer', description: 'Уровень заголовка: 1, 2 или 3' },
+    bold: { type: 'boolean', description: 'Жирный абзац' },
+    items: { type: 'array', items: { type: 'string' }, description: 'Пункты списка' },
+    headers: { type: 'array', items: { type: 'string' }, description: 'Заголовки столбцов таблицы' },
+    rows: { type: 'array', items: { type: 'array', items: { type: 'string' } }, description: 'Строки таблицы' },
+  },
+  required: ['type'],
+};
+
+TOOLS.push(
+  {
+    name: 'create_word_document',
+    description: 'Создать документ Word (.docx) и приложить к ответу. Для отчётов, сводных отчётов, писем, актов, протоколов.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        file_name: { type: 'string', description: 'Имя файла по-русски, без расширения' },
+        title: { type: 'string', description: 'Заголовок документа' },
+        orientation: { type: 'string', enum: ['portrait', 'landscape'], description: 'Ориентация страницы: landscape — для широких таблиц' },
+        blocks: { type: 'array', items: BLOCK_SCHEMA, description: 'Содержимое документа по порядку' },
+      },
+      required: ['file_name', 'blocks'],
+    },
+  },
+  {
+    name: 'web_search',
+    description: 'Найти актуальные сведения в интернете. Возвращает краткую сводку найденного и источники.',
+    input_schema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Поисковый запрос' } },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'create_image',
+    description: 'Создать изображение (иллюстрацию, эскиз, схему) и приложить к ответу.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        file_name: { type: 'string', description: 'Имя файла по-русски, без расширения' },
+        prompt: { type: 'string', description: 'Подробное описание изображения на английском языке' },
+        aspect_ratio: { type: 'string', enum: ['1:1', '4:3', '3:4', '16:9', '9:16'], description: 'Соотношение сторон' },
+      },
+      required: ['file_name', 'prompt'],
+    },
+  },
+);
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -166,6 +226,10 @@ export function toModelMessages(messages) {
         content.push({ type: 'text', text: `[Фото: ${name}]` });
       } else if (role === 'user' && f?.type === 'application/pdf' && typeof f?.data === 'string') {
         content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: f.data }, title: name });
+      } else if (role === 'user' && typeof f?.text === 'string' && f.text) {
+        content.push({ type: 'text', text: `[Документ: ${name}]\n${f.text.slice(0, 150000)}\n[Конец документа: ${name}]` });
+      } else if (role === 'user' && typeof f?.note === 'string' && f.note) {
+        content.push({ type: 'text', text: `[Файл: ${name} — содержимое не передано: ${f.note.slice(0, 300)}]` });
       } else {
         content.push({ type: 'text', text: `[Файл: ${name} — содержимое не передано]` });
       }
@@ -342,6 +406,25 @@ export function fileFromTool(block) {
     if (headers.length === 0) return null;
     return { kind: 'table', name: safeName(input.file_name, '.xlsx'), headers, rows };
   }
+  if (block.name === 'create_word_document') {
+    const blocks = (Array.isArray(input.blocks) ? input.blocks : []).slice(0, 2000);
+    if (blocks.length === 0 && !input.title) return null;
+    return {
+      kind: 'word',
+      name: safeName(input.file_name, '.docx'),
+      title: String(input.title ?? '').slice(0, 500),
+      orientation: input.orientation === 'landscape' ? 'landscape' : 'portrait',
+      blocks: blocks.map((b) => ({
+        type: String(b?.type || 'paragraph'),
+        text: String(b?.text ?? '').slice(0, 50000),
+        level: Number(b?.level) || 1,
+        bold: !!b?.bold,
+        items: (Array.isArray(b?.items) ? b.items : []).slice(0, 1000).map((x) => String(x ?? '').slice(0, 10000)),
+        headers: (Array.isArray(b?.headers) ? b.headers : []).slice(0, 30).map((x) => String(x ?? '')),
+        rows: (Array.isArray(b?.rows) ? b.rows : []).slice(0, 3000).map((r) => (Array.isArray(r) ? r : [r]).slice(0, 30).map((x) => String(x ?? '').slice(0, 5000))),
+      })),
+    };
+  }
   if (block.name === 'create_text_file') {
     const content = String(input.content ?? '');
     if (!content) return null;
@@ -375,10 +458,17 @@ const SCRUB_RULES = [
   [/(?:gemini|gemma|claude)-[a-z0-9.-]+/gi, 'ИИ агент JARVIS'],
 ];
 
-export function scrubVendor(text) {
-  let out = String(text ?? '');
+function scrubPlain(text) {
+  let out = text;
   for (const [re, to] of SCRUB_RULES) out = out.replace(re, to);
   return out.replace(/ИИ агент JARVIS(?:[\s,]+ИИ агент JARVIS)+/g, 'ИИ агент JARVIS');
+}
+
+// Ссылки не меняются: фильтр применяется только к тексту между ними.
+export function scrubVendor(text) {
+  const s = String(text ?? '');
+  const parts = s.split(/(https?:\/\/[^\s<>"«»]+)/g);
+  return parts.map((p, i) => (i % 2 ? p : scrubPlain(p))).join('');
 }
 
 export function scrubFile(file) {
@@ -386,33 +476,181 @@ export function scrubFile(file) {
     return { ...file, name: scrubVendor(file.name), headers: file.headers.map(scrubVendor), rows: file.rows.map((r) => r.map(scrubVendor)) };
   }
   if (file.kind === 'text') return { ...file, name: scrubVendor(file.name), content: scrubVendor(file.content) };
+  if (file.kind === 'word') {
+    return {
+      ...file,
+      name: scrubVendor(file.name),
+      title: scrubVendor(file.title),
+      blocks: file.blocks.map((b) => ({
+        ...b, text: scrubVendor(b.text), items: b.items.map(scrubVendor), headers: b.headers.map(scrubVendor), rows: b.rows.map((r) => r.map(scrubVendor)),
+      })),
+    };
+  }
+  if (file.kind === 'image') return { ...file, name: scrubVendor(file.name) };
   return file;
+}
+
+// ---------- Поиск в интернете ----------
+
+// Ссылка-перенаправление поисковой системы → настоящий адрес страницы.
+async function resolveLink(url) {
+  if (!/^https:\/\/vertexaisearch\.cloud\.google\.com\//.test(url)) return url;
+  try {
+    const r = await fetch(url, { method: 'HEAD', redirect: 'manual' });
+    const loc = r.headers.get('location');
+    return loc && /^https?:\/\//.test(loc) ? loc : null;
+  } catch {
+    return null;
+  }
+}
+
+async function searchGemini(env, query) {
+  const model = String(env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL).replace(/^models\//, '');
+  let response;
+  try {
+    response = await fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: `Найди в интернете и кратко изложи факты с датами и цифрами: ${query}` }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens: 6000 },
+      }),
+    });
+  } catch {
+    throw new HttpError(502, 'Поиск недоступен.');
+  }
+  if (!response.ok) throw await geminiError(response);
+  const data = await response.json();
+  const cand = data?.candidates?.[0];
+  const text = (cand?.content?.parts || []).filter((p) => !p.thought && typeof p.text === 'string').map((p) => p.text).join('\n').trim();
+  const chunks = (cand?.groundingMetadata?.groundingChunks || []).map((c) => c.web).filter(Boolean).slice(0, MAX_SOURCES);
+  const sources = (await Promise.all(chunks.map(async (w) => {
+    const url = (await resolveLink(String(w.uri || ''))) || (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(w.title || '') ? `https://${w.title}` : null);
+    return url ? { title: String(w.title || url), url } : null;
+  }))).filter(Boolean);
+  return { text, sources };
+}
+
+async function searchAnthropic(env, query) {
+  let response;
+  try {
+    response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': API_VERSION },
+      body: JSON.stringify({
+        model: env.MODEL || 'claude-sonnet-5-5',
+        max_tokens: 4000,
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+        messages: [{ role: 'user', content: `Найди в интернете и кратко изложи факты с датами и цифрами: ${query}` }],
+      }),
+    });
+  } catch {
+    throw new HttpError(502, 'Поиск недоступен.');
+  }
+  if (!response.ok) throw new HttpError(502, 'Поиск недоступен.');
+  const data = await response.json();
+  const content = Array.isArray(data?.content) ? data.content : [];
+  const text = content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  const sources = content.filter((b) => b.type === 'web_search_tool_result' && Array.isArray(b.content))
+    .flatMap((b) => b.content).filter((r) => r?.url).slice(0, MAX_SOURCES).map((r) => ({ title: String(r.title || r.url), url: String(r.url) }));
+  return { text, sources };
+}
+
+export async function webSearch(env, query) {
+  const q = String(query || '').trim().slice(0, 500);
+  if (!q) return { text: '', sources: [], error: 'Пустой поисковый запрос.' };
+  try {
+    const r = providerOf(env) === 'gemini' ? await searchGemini(env, q) : await searchAnthropic(env, q);
+    if (!r.text && r.sources.length === 0) return { ...r, error: 'Ничего не найдено.' };
+    return r;
+  } catch (e) {
+    return { text: '', sources: [], error: e instanceof HttpError ? e.message : 'Поиск недоступен.' };
+  }
+}
+
+// ---------- Изображения ----------
+
+export async function createImage(env, input) {
+  const name = safeName(input?.file_name, '.png');
+  const prompt = String(input?.prompt || '').trim().slice(0, 4000);
+  if (!prompt) return { error: 'Нет описания изображения.' };
+  const model = String(env.GEMINI_IMAGE_MODEL || '').replace(/^models\//, '');
+  if (providerOf(env) !== 'gemini' || !model) return { error: 'Создание изображений не подключено для текущего ключа ИИ.' };
+  const aspect = ['1:1', '4:3', '3:4', '16:9', '9:16'].includes(input?.aspect_ratio) ? input.aspect_ratio : null;
+  let response;
+  try {
+    response = await fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'], ...(aspect ? { imageConfig: { aspectRatio: aspect } } : {}) },
+      }),
+    });
+  } catch {
+    return { error: 'Сервис изображений недоступен. Повторите позже.' };
+  }
+  if (!response.ok) {
+    const e = await geminiError(response);
+    if (e.status === 429) return { error: 'Создание изображений недоступно на бесплатном ключе или исчерпан лимит. Включите оплату в AI Studio или повторите позже.' };
+    return { error: e.message };
+  }
+  const data = await response.json();
+  const part = (data?.candidates?.[0]?.content?.parts || []).find((p) => p.inlineData?.data);
+  if (!part) return { error: 'Изображение не создано: запрос отклонён или пуст. Измените описание.' };
+  const type = part.inlineData.mimeType || 'image/png';
+  const ext = type === 'image/jpeg' ? '.jpg' : type === 'image/webp' ? '.webp' : '.png';
+  return { file: { kind: 'image', name: name.replace(/\.png$/, ext), type, data: part.inlineData.data } };
+}
+
+// ---------- Переписка ----------
+
+async function runTool(env, use, files, sources) {
+  if (use.name === 'web_search') {
+    const r = await webSearch(env, use.input?.query);
+    sources.push(...r.sources);
+    if (r.error) return { content: `Поиск не выполнен: ${r.error}`, is_error: true };
+    const list = r.sources.map((x, i) => `${i + 1}. ${x.title} — ${x.url}`).join('\n');
+    return { content: `${r.text}\n\nИсточники:\n${list || '(не указаны)'}` };
+  }
+  if (use.name === 'create_image') {
+    const r = await createImage(env, use.input);
+    if (r.error) return { content: `Изображение не создано: ${r.error}`, is_error: true };
+    files.push(r.file);
+    return { content: `Изображение «${r.file.name}» создано и будет приложено к ответу.` };
+  }
+  const file = fileFromTool(use);
+  if (!file) return { content: 'Файл не создан: неверные данные.', is_error: true };
+  files.push(file);
+  return { content: `Файл «${file.name}» создан и будет приложен к ответу.` };
 }
 
 async function handleChat(env, data) {
   const messages = toModelMessages(data?.messages);
   const files = [];
   const texts = [];
+  const sources = [];
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const result = await callModel(env, { max_tokens: 8000, system: CHAT_SYSTEM, tools: TOOLS, messages });
+    const result = await callModel(env, { max_tokens: 16000, system: CHAT_SYSTEM, tools: TOOLS, messages });
     const t = textOf(result.content);
     if (t) texts.push(t);
     const uses = (result.content || []).filter((b) => b.type === 'tool_use');
     if (result.stop_reason !== 'tool_use' || uses.length === 0) break;
-    const toolResults = uses.map((u) => {
-      const file = fileFromTool(u);
-      if (file) files.push(file);
-      return {
-        type: 'tool_result',
-        tool_use_id: u.id,
-        content: file ? `Файл «${file.name}» создан и будет приложен к ответу.` : 'Файл не создан: неверные данные.',
-        ...(file ? {} : { is_error: true }),
-      };
-    });
+    const toolResults = [];
+    for (const u of uses) {
+      const r = await runTool(env, u, files, sources);
+      toolResults.push({ type: 'tool_result', tool_use_id: u.id, content: r.content, ...(r.is_error ? { is_error: true } : {}) });
+    }
     messages.push({ role: 'assistant', content: result.content });
     messages.push({ role: 'user', content: toolResults });
   }
-  const text = texts.join('\n\n') || (files.length ? 'Готово, файл во вложении.' : 'ИИ агент не дал ответа. Повторите вопрос.');
+  let text = texts.join('\n\n') || (files.length ? 'Готово, файл во вложении.' : 'ИИ агент не дал ответа. Повторите вопрос.');
+  // Источники поиска добавляются, если агент не привёл ссылки сам.
+  const unique = [...new Map(sources.map((x) => [x.url, x])).values()];
+  if (unique.length && !/https?:\/\//.test(text)) {
+    text += `\n\nИсточники:\n${unique.map((x, i) => `${i + 1}. ${x.title} — ${x.url}`).join('\n')}`;
+  }
   return { text: scrubVendor(text), files: files.map(scrubFile) };
 }
 
