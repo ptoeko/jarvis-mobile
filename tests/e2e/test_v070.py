@@ -13,6 +13,7 @@
 """
 import io
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -83,6 +84,16 @@ def stored_files(page):
 
 def spoken(page):
     return page.evaluate('window.__spoken')
+
+
+def wait_until(check, what, timeout=10):
+    # wait_for_function со строкой запрещён политикой безопасности страницы APK.
+    end = time.time() + timeout
+    while time.time() < end:
+        if check():
+            return
+        time.sleep(0.1)
+    raise AssertionError(f'не дождались: {what}')
 
 
 @case
@@ -215,8 +226,8 @@ def voice_settings_auto_and_sir(page, ctx, agent):
     agent.chat_reply = {'text': 'Слушаю, сэр. Отчёт готов.', 'files': []}
     v040.to_dialog(page)
     send(page, 'Как дела?')
-    expect(page.locator('.msg-assistant')).to_have_count(1)
-    page.wait_for_function("window.__spoken.some(s => s.text === 'Слушаю, сэр. Отчёт готов.')")
+    expect(page.locator('.msg-assistant:not(.typing)')).to_have_count(1)
+    wait_until(lambda: any(x.get('text') == 'Слушаю, сэр. Отчёт готов.' for x in spoken(page)), 'автоозвучка ответа')
     chat = [r for r in agent.requests if r['path'] == '/v1/chat'][-1]['body']
     assert chat['prefs'] == {'sir': True}, chat
     v050.no_vendor_names(page)
@@ -227,7 +238,7 @@ def sir_off_by_default(page, ctx, agent):
     v050.connected(page)
     v040.to_dialog(page)
     send(page, 'Кто тебя создал?')
-    expect(page.locator('.msg-assistant')).to_have_count(1)
+    expect(page.locator('.msg-assistant:not(.typing)')).to_have_count(1)
     chat = [r for r in agent.requests if r['path'] == '/v1/chat'][-1]['body']
     assert chat['prefs'] == {'sir': False}, chat
 
