@@ -53,7 +53,7 @@ test('переписка через Gemini: адрес модели, ключ в
     assert.equal(c.headers['x-goog-api-key'], 'gm-test-key');
     assert.match(c.body.systemInstruction.parts[0].text, /Никогда не называй модель/);
     assert.deepEqual(c.body.contents, [{ role: 'user', parts: [{ text: 'Кто ты?' }] }]);
-    assert.equal(c.body.tools[0].functionDeclarations.map((f) => f.name).join(','), 'create_table,create_text_file');
+    assert.equal(c.body.tools[0].functionDeclarations.map((f) => f.name).join(','), 'create_table,create_text_file,create_word_document,web_search,create_image');
     assert.ok(!JSON.stringify(data).includes('gm-test-key'));
   } finally { m.restore(); }
 });
@@ -190,4 +190,13 @@ test('фильтр применяется к ответу агента и к с�
     assert.doesNotMatch(JSON.stringify(data.files), /gemini|google/i);
     assert.equal(data.files[0].name, 'Отчёт ИИ агент JARVIS.xlsx');
   } finally { m.restore(); }
+});
+
+test('выбор модели изображений: flash выше pro, стабильная выше предварительной', async () => {
+  const { rankImageModels } = await import('../../proxy/pick-gemini-model.mjs');
+  const gen = ['generateContent'];
+  const models = ['gemini-3.1-pro-image-preview', 'gemini-2.5-flash-image', 'gemini-3.1-flash-image-preview', 'gemini-3.1-flash-image', 'gemini-3.8-flash', 'imagen-4.0-generate-001']
+    .map((n) => ({ name: `models/${n}`, supportedGenerationMethods: gen }));
+  assert.deepEqual(rankImageModels(models), ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-image-preview', 'gemini-3.1-pro-image-preview']);
+  assert.deepEqual(rankImageModels([]), []);
 });

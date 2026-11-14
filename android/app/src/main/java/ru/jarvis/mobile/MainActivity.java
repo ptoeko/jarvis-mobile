@@ -737,8 +737,19 @@ public class MainActivity extends Activity {
 
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-            // Переходы на внешние сайты внутри приложения запрещены.
-            return !HOST.equals(request.getUrl().getHost());
+            Uri url = request.getUrl();
+            if (HOST.equals(url.getHost())) return false;
+            // Внешние ссылки (источники поиска) открываются в браузере телефона,
+            // внутри приложения переходы на внешние сайты запрещены.
+            String scheme = url.getScheme();
+            if (("https".equals(scheme) || "http".equals(scheme)) && request.hasGesture()) {
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, url).addCategory(Intent.CATEGORY_BROWSABLE));
+                } catch (ActivityNotFoundException e) {
+                    Log.w(TAG, "no browser for link");
+                }
+            }
+            return true;
         }
     }
 

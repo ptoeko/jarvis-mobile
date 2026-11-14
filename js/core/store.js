@@ -17,6 +17,9 @@ export const META_NEXT_NUMBER = 'nextRecordNumber';
 // закроет приложение в фоне (например, при переключении на камеру).
 // В реестр они не входят, пока человек их не подтвердит.
 export const META_DRAFTS = 'pendingDrafts';
+// Архив переписок: список [{ id, title, createdAt, archivedAt, count }].
+// Сообщения архивной переписки хранятся в том же хранилище с полем archiveId.
+export const META_ARCHIVES = 'dialogArchives';
 
 export function createId() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
@@ -137,8 +140,93 @@ export function createStore(adapter, now = () => new Date()) {
     return adapter.get('attachments', id);
   }
 
+  // Текущая переписка — сообщения без archiveId.
   async function listMessages() {
-    return (await adapter.getAll('messages')).sort(byTime);
+    return (await adapter.getAll('messages')).filter((m) => !m.archiveId).sort(byTime);
+  }
+
+  async function readArchives() {
+    const raw = await adapter.getMeta(META_ARCHIVES);
+    return Array.isArray(raw) ? raw.filter((a) => a && typeof a.id === 'string') : [];
+  }
+
+  // Архив переписок, новые сверху.
+  async function listArchives() {
+    return (await readArchives()).sort((a, b) => (a.archivedAt < b.archivedAt ? 1 : -1));
+  }
+
+  async function listArchiveMessages(archiveId) {
+    return (await adapter.getAll('messages')).filter((m) => m.archiveId === archiveId).sort(byTime);
+  }
+
+  // Название архивной переписки: начало первого сообщения пользователя.
+  function archiveTitle(messages) {
+    const first = messages.find((m) => m.role === 'user' && m.text.trim()) || messages.find((m) => m.text.trim());
+    const text = (first?.text || '').replace(/\s+/g, ' ').trim();
+    if (!text) return 'Переписка с файлами';
+    return text.length > 60 ? `${text.slice(0, 57)}…` : text;
+  }
+
+  // «Новый диалог»: текущая переписка целиком уходит в архив. Ничего не удаляется.
+  function archiveDialog() {
+    return serial(async () => {
+      const current = (await adapter.getAll('messages')).filter((m) => !m.archiveId).sort(byTime);
+      if (current.length === 0) throw new RecordError('Переписка пуста — архивировать нечего.');
+      const id = createId();
+      const entry = {
+        id,
+        title: archiveTitle(current),
+        createdAt: current[0].createdAt,
+        archivedAt: stamp(),
+        count: current.length,
+      };
+      const archives = await readArchives();
+      await adapter.commit([
+        ...current.map((m) => ({ type: 'put', store: 'messages', item: { ...m, archiveId: id } })),
+        { type: 'put', store: 'meta', item: { id: META_ARCHIVES, value: [...archives, entry] } },
+      ]);
+      return entry;
+    });
+  }
+
+  // Файлы, которые нельзя удалять вместе с перепиской: они приложены к записям
+  // реестра или к черновикам на проверке.
+  async function protectedAttachmentIds() {
+    const [records, drafts] = await Promise.all([adapter.getAll('records'), readDrafts()]);
+    return new Set([...records, ...drafts].flatMap((r) => attachmentRefs(r.attachments)).map((a) => a.id));
+  }
+
+  async function deleteMessagesOps(messages) {
+    const keep = await protectedAttachmentIds();
+    const files = messages.flatMap((m) => attachmentRefs(m.attachments)).map((a) => a.id).filter((id) => !keep.has(id));
+    return [
+      ...messages.map((m) => ({ type: 'delete', store: 'messages', id: m.id })),
+      ...files.map((id) => ({ type: 'delete', store: 'attachments', id })),
+    ];
+  }
+
+  // «Удалить переписку»: удаляются сообщения текущего диалога и их файлы.
+  // Реестр, черновики и файлы, приложенные к записям, не затрагиваются.
+  function deleteDialog() {
+    return serial(async () => {
+      const current = (await adapter.getAll('messages')).filter((m) => !m.archiveId);
+      if (current.length === 0) return 0;
+      await adapter.commit(await deleteMessagesOps(current));
+      return current.length;
+    });
+  }
+
+  // Удаляет одну переписку из архива.
+  function deleteArchive(archiveId) {
+    return serial(async () => {
+      const archives = await readArchives();
+      if (!archives.some((a) => a.id === archiveId)) throw new RecordError('Переписка не найдена в архиве.');
+      const messages = (await adapter.getAll('messages')).filter((m) => m.archiveId === archiveId);
+      await adapter.commit([
+        ...(await deleteMessagesOps(messages)),
+        { type: 'put', store: 'meta', item: { id: META_ARCHIVES, value: archives.filter((a) => a.id !== archiveId) } },
+      ]);
+    });
   }
 
   async function listRecords() {
@@ -223,6 +311,7 @@ export function createStore(adapter, now = () => new Date()) {
         { type: 'clear', store: 'attachments' },
         { type: 'put', store: 'meta', item: { id: META_NEXT_NUMBER, value: 1 } },
         { type: 'put', store: 'meta', item: { id: META_DRAFTS, value: [] } },
+        { type: 'put', store: 'meta', item: { id: META_ARCHIVES, value: [] } },
       ]);
     });
   }
@@ -305,6 +394,11 @@ export function createStore(adapter, now = () => new Date()) {
     storageKind: adapter.kind,
     addMessage,
     listMessages,
+    listArchives,
+    listArchiveMessages,
+    archiveDialog,
+    deleteDialog,
+    deleteArchive,
     listRecords,
     confirmRecord,
     updateRecord,

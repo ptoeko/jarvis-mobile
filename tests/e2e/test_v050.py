@@ -161,7 +161,7 @@ def chat_with_files_both_ways(page, ctx, agent):
     assert [f['name'] for f in files] == ['фото трещины.png', 'акт освидетельствования.pdf', 'ведомость.docx']
     assert files[0]['type'] == 'image/jpeg' and base64.b64decode(files[0]['data'])[:2] == b'\xff\xd8', 'фото уменьшено в JPEG'
     assert base64.b64decode(files[1]['data']) == v040.FILES['акт освидетельствования.pdf']
-    assert 'data' not in files[2], 'Word передаётся только названием'
+    assert 'data' not in files[2], 'Word передаётся текстом, а не файлом (учебный файл повреждён — передаётся причина)'
 
     # Файл Excel от агента — настоящий и читается.
     data = page.evaluate('''async () => {

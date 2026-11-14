@@ -492,3 +492,41 @@ button:disabled { opacity: 0.5; cursor: default; }
 .typing .msg-text { color: var(--muted); font-style: italic; }
 #ai-state[data-state="on"] { color: var(--ok); }
 #ai-group .fields { margin-top: 8px; }
+
+/* Кнопка «Переписка» в шапке (только на экране «Диалог») */
+.topbar-btn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.topbar-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+
+/* Архив переписок */
+.archive-items { list-style: none; margin: 0; padding: 0; }
+.archive-items li { border-bottom: 1px solid var(--line); }
+.archive-item {
+  display: block;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 2px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.archive-item-title { display: block; font-weight: 600; overflow-wrap: anywhere; }
+.archive-item-meta { display: block; color: var(--muted); font-size: 0.8125rem; }
+.archive-messages { gap: 12px; margin-bottom: 4px; }
+.archive-messages .msg { max-width: 100%; }
+
+.msg-text a { color: var(--focus); text-decoration: underline; overflow-wrap: anywhere; }
