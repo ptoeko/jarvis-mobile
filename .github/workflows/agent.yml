@@ -136,23 +136,30 @@ jobs:
           URL: ${{ steps.deploy.outputs.url }}
           CODE: ${{ secrets.JARVIS_ACCESS_CODE }}
         run: |
+          # Ответ сохраняется в файл: ответ с изображением слишком велик для
+          # передачи в командной строке.
           ask() {
             curl -s --max-time 120 -H "Authorization: Bearer $CODE" -H 'Content-Type: application/json' \
-              -d "{\"messages\":[{\"role\":\"user\",\"text\":\"$1\"}]}" "$URL/v1/chat"
+              -d "{\"messages\":[{\"role\":\"user\",\"text\":\"$1\"}]}" "$URL/v1/chat" > "$RUNNER_TEMP/answer.json"
           }
           report() { node -e '
-            const [label, raw] = process.argv.slice(1);
+            const fs = require("fs");
+            const [label, file] = process.argv.slice(1);
+            const raw = fs.readFileSync(file, "utf8");
             let d; try { d = JSON.parse(raw); } catch { d = { error: raw.slice(0, 200) }; }
             const kinds = (d.files || []).map((f) => f.kind).join(",") || "нет";
             const text = String(d.text || d.error || "").replace(/\s+/g, " ").slice(0, 300);
             console.log(`| ${label} | ${kinds} | ${text.replace(/\|/g, "/")} |`);
-          ' "$1" "$2" >> "$GITHUB_STEP_SUMMARY"; }
+          ' "$1" "$RUNNER_TEMP/answer.json" >> "$GITHUB_STEP_SUMMARY"; }
           echo "### Проверка возможностей агента" >> "$GITHUB_STEP_SUMMARY"
           echo "| Проверка | Файлы | Ответ |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          report "Документ Word" "$(ask 'Создай документ Word с именем Проверка: заголовок Проверка и один абзац Тест. Без пояснений.')"
+          ask 'Создай документ Word с именем Проверка: заголовок Проверка и один абзац Тест. Без пояснений.'
+          report "Документ Word"
           sleep 20
-          report "Поиск в интернете" "$(ask 'Найди в интернете официальный сайт Минстроя России. Ответь одной строкой со ссылкой.')"
+          ask 'Найди в интернете официальный сайт Минстроя России. Ответь одной строкой со ссылкой.'
+          report "Поиск в интернете"
           sleep 20
-          report "Изображение" "$(ask 'Создай изображение: простой красный квадрат на белом фоне. Без пояснений.')"
+          ask 'Создай изображение: простой красный квадрат на белом фоне. Без пояснений.'
+          report "Изображение"
           cat "$GITHUB_STEP_SUMMARY"
