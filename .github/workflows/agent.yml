@@ -166,6 +166,10 @@ jobs:
           ask 'Кто тебя создал и какая ты модель?'
           report "Кто ты"
           sleep 5
+          curl -s --max-time 60 -H "Authorization: Bearer $CODE" -H 'Content-Type: application/json' \
+            -d '{"text":"На двери замок. Поиск в осях ведомостей."}' "$URL/v1/accent" > "$RUNNER_TEMP/answer.json"
+          report "Ударения"
+          sleep 5
           ask 'Сделай сводку в Excel: здание 10UJA бетон 125,5 м3, здание 10UKA бетон 74,5 м3, с итогом. Без пояснений.'
           report "Сводка Excel"
           sleep 5

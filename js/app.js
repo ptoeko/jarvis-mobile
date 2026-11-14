@@ -8,7 +8,8 @@ import { createIdbAdapter } from './core/idb.js';
 import { documentText, canRead } from './core/docread.js';
 import { buildDocx, DOCX_MIME } from './core/docx.js';
 import { buildWorkbook } from './core/workbook.js';
-import { createSpeech, normalizePrefs, META_VOICE, RATES } from './core/speech.js';
+import { createSpeech, normalizePrefs, speechText, META_VOICE, RATES } from './core/speech.js';
+import { applyDictionary, acceptAccents, normalizeDictionary, normalizeEntry, META_PRONOUNCE } from './core/pronounce.js';
 import { createAiClient, AiError, normalizeAgentUrl, validAccessCode, blobToBase64, META_AI_URL, META_AI_CODE, AI_LABEL } from './core/ai.js';
 import { computeFeatures, statusSummary, STATE_LABELS } from './core/status.js';
 import { parseMessage } from './core/parse.js';
@@ -41,6 +42,8 @@ let store;
 let ai = createAiClient();
 const speech = createSpeech(window);
 let voicePrefs = normalizePrefs(null);
+let pronunciation = [];
+const accentCache = new Map(); // текст → текст с ударениями от агента
 env.aiConfigured = false;
 
 async function loadAi() {
@@ -377,7 +380,32 @@ function markSpeaking(id) {
   }
 }
 
-function speakText(text, id) {
+// Текст для синтезатора: словарь произношения и, если включено, ударения от
+// ИИ агента (по смыслу: за́мок/замо́к). Без связи или при ошибке агента —
+// только словарь.
+const ACCENT_TIMEOUT = 10000;
+async function prepareSpeech(text) {
+  const base = applyDictionary(speechText(text), pronunciation);
+  if (!voicePrefs.accents || !ai.configured || navigator.onLine === false || base.length > 6000) return base;
+  if (accentCache.has(base)) return accentCache.get(base);
+  try {
+    const accented = await Promise.race([
+      ai.accent(base),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ACCENT_TIMEOUT)),
+    ]);
+    const ok = acceptAccents(base, accented);
+    if (ok) {
+      accentCache.set(base, ok);
+      return ok;
+    }
+  } catch {
+    // озвучка продолжается со словарём
+  }
+  return base;
+}
+
+let speakSeq = 0;
+async function speakText(text, id) {
   const status = speech.status();
   if (status === 'loading') {
     toast('Голос JARVIS загружается. Нажмите ещё раз через пару секунд.');
@@ -387,7 +415,17 @@ function speakText(text, id) {
     toast('На телефоне нет русского голоса. Настройки телефона → Синтез речи → установите русский язык.');
     return false;
   }
-  if (status === 'unavailable' || !speech.speak(text, voicePrefs)) {
+  if (status === 'unavailable') {
+    toast('Озвучка недоступна на этом телефоне.');
+    return false;
+  }
+  const seq = ++speakSeq;
+  speech.stop();
+  markSpeaking(id);
+  const prepared = await prepareSpeech(text);
+  if (seq !== speakSeq) return false; // за это время нажали другую кнопку или «стоп»
+  if (!speech.speak(prepared, voicePrefs)) {
+    markSpeaking(null);
     toast('Озвучка недоступна на этом телефоне.');
     return false;
   }
@@ -396,8 +434,10 @@ function speakText(text, id) {
 }
 
 function toggleSpeak(message) {
-  if (speakingMessageId === message.id && speech.speaking) {
+  if (speakingMessageId === message.id) {
+    speakSeq++;
     speech.stop();
+    markSpeaking(null);
     return;
   }
   speakText(message.text, message.id);
@@ -406,9 +446,54 @@ function toggleSpeak(message) {
 async function loadVoicePrefs() {
   try {
     voicePrefs = normalizePrefs(await store.getMeta(META_VOICE));
+    pronunciation = normalizeDictionary(await store.getMeta(META_PRONOUNCE));
   } catch {
     voicePrefs = normalizePrefs(null);
+    pronunciation = [];
   }
+}
+
+// ---------- Словарь произношения ----------
+function renderPronunciation() {
+  $('pron-empty').hidden = pronunciation.length > 0;
+  $('pron-list').replaceChildren(...pronunciation.map((e) => {
+    const listen = el('button', { type: 'button', className: 'copy-btn', title: 'Прослушать' }, 'Прослушать');
+    listen.addEventListener('click', () => speakText(e.word, `pron-${e.word}`));
+    const remove = el('button', { type: 'button', className: 'copy-btn', title: 'Удалить' }, 'Удалить');
+    remove.setAttribute('aria-label', `Удалить «${e.word}» из словаря`);
+    remove.addEventListener('click', async () => {
+      pronunciation = pronunciation.filter((x) => x !== e);
+      await savePronunciation();
+      renderPronunciation();
+    });
+    return el('li', { className: 'pron-item', dataset: { word: e.word } },
+      el('span', { className: 'pron-text' }, `${e.word} → ${e.reading}`), listen, remove);
+  }));
+}
+
+async function savePronunciation() {
+  try {
+    await store.setMeta(META_PRONOUNCE, pronunciation);
+    accentCache.clear();
+  } catch (e) {
+    console.error(e);
+    toast('Не удалось сохранить словарь.');
+  }
+}
+
+async function addPronunciation(event) {
+  event.preventDefault();
+  const entry = normalizeEntry($('pron-word').value, $('pron-reading').value);
+  if (!entry) {
+    toast('Заполните оба поля: слово и как его читать.');
+    return;
+  }
+  pronunciation = normalizeDictionary([entry, ...pronunciation.filter((e) => e.word.toLowerCase() !== entry.word.toLowerCase())]);
+  await savePronunciation();
+  $('pron-word').value = '';
+  $('pron-reading').value = '';
+  renderPronunciation();
+  toast(`В словаре: ${entry.word} → ${entry.reading}`);
 }
 
 async function saveVoicePrefs(patch) {
@@ -450,6 +535,8 @@ function renderVoiceSettings() {
   rate.value = String(RATES.reduce((best, r) => (Math.abs(r.value - voicePrefs.rate) < Math.abs(best.value - voicePrefs.rate) ? r : best)).value);
   $('voice-auto').checked = voicePrefs.auto;
   $('voice-sir').checked = voicePrefs.sir;
+  $('voice-accents').checked = voicePrefs.accents;
+  renderPronunciation();
   $('voice-test').disabled = !speech.canSpeak || status === 'unavailable' || status === 'no-russian';
   // Синтезатор запускается не сразу: обновить настройки, когда он будет готов.
   if (status === 'loading' && voiceRetry < 40) {
@@ -462,7 +549,7 @@ function renderVoiceSettings() {
 
 function testVoice() {
   const sir = voicePrefs.sir ? ', сэр' : '';
-  speakText(`Слушаю${sir}. Я JARVIS. Готов к работе на площадке.`, 'voice-test');
+  speakText(`Слушаю${sir}. Я JARVIS, мой разработчик — AYRAT. Готов к работе на площадке.`, 'voice-test');
 }
 
 // ---------- Диктовка ----------
@@ -859,6 +946,7 @@ async function askAgent() {
 
 async function handleSubmit(event) {
   event.preventDefault();
+  speakSeq++;
   speech.stop();
   await withComposer(async (text) => {
     try {
@@ -1531,6 +1619,8 @@ async function start() {
   $('voice-rate').addEventListener('change', (e) => saveVoicePrefs({ rate: Number(e.target.value) }));
   $('voice-auto').addEventListener('change', (e) => saveVoicePrefs({ auto: e.target.checked }));
   $('voice-sir').addEventListener('change', (e) => saveVoicePrefs({ sir: e.target.checked }));
+  $('voice-accents').addEventListener('change', (e) => saveVoicePrefs({ accents: e.target.checked }));
+  $('pron-form').addEventListener('submit', addPronunciation);
   $('voice-test').addEventListener('click', testVoice);
   $('dialog-menu-btn').addEventListener('click', openDialogMenu);
   $('archive-delete').addEventListener('click', deleteOpenArchive);

@@ -187,6 +187,7 @@ def speak_reply_and_stop(page, ctx, agent):
     expect(button).to_be_visible()
     assert spoken(page) == []  # без автоозвучки ответ не читается сам
     button.click()
+    wait_until(lambda: any('text' in s for s in spoken(page)), 'озвучка ответа')
     said = [s for s in spoken(page) if 'text' in s][-1]
     assert said['text'] == 'Готово. Источник: ссылка\nИсточники — в тексте ответа.', said
     assert abs(said['rate'] - 0.95) < 1e-9 and abs(said['pitch'] - 0.82) < 1e-9, said
@@ -212,8 +213,9 @@ def voice_settings_auto_and_sir(page, ctx, agent):
     page.check('#voice-sir')
     base.shot(page, 'v070-04-voice-settings')
     page.click('#voice-test')
+    wait_until(lambda: any('text' in s for s in spoken(page)), 'прослушивание голоса')
     test = [s for s in spoken(page) if 'text' in s][-1]
-    assert test['text'] == 'Слушаю, сэр. Я JARVIS. Готов к работе на площадке.', test
+    assert test['text'] == 'Слушаю, сэр. Я Джа\u0301рвис, мой разработчик — Айра\u0301т. Готов к работе на площадке.', test
     assert abs(test['rate'] - 0.85) < 1e-9
     # Настройки сохраняются: после перезапуска приложения они те же.
     page.reload()

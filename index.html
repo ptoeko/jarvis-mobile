@@ -167,9 +167,28 @@
           </div>
           <label class="check"><input type="checkbox" id="voice-auto"> Читать ответы вслух автоматически</label>
           <label class="check"><input type="checkbox" id="voice-sir"> Обращаться ко мне «сэр»</label>
+          <label class="check"><input type="checkbox" id="voice-accents"> Точные ударения через ИИ агента (нужен интернет)</label>
           <div class="row-actions">
             <button type="button" class="secondary" id="voice-test">Прослушать</button>
           </div>
+
+          <h4 class="pron-title">Произношение</h4>
+          <p class="note">Если голос читает слово неправильно, добавьте его сюда. Ударение — знак + после ударной гласной: Айра+т, ве+домостей. Встроенный словарь уже знает JARVIS, AYRAT, СМР, ПНР, АЭС, ППР, ведомость, оси, поиск, договор, м³ и другие.</p>
+          <ul class="pron-list" id="pron-list"></ul>
+          <p class="note" id="pron-empty">Своих слов пока нет.</p>
+          <form id="pron-form" class="fields" novalidate autocomplete="off">
+            <div class="field">
+              <label for="pron-word">Слово, как написано</label>
+              <input id="pron-word" type="text" placeholder="например, ростверк" autocapitalize="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="pron-reading">Как читать</label>
+              <input id="pron-reading" type="text" placeholder="например, ростве+рк" autocapitalize="off" spellcheck="false">
+            </div>
+            <div class="row-actions">
+              <button type="submit" class="secondary" id="pron-add">Добавить в словарь</button>
+            </div>
+          </form>
         </div>
 
         <div class="group">

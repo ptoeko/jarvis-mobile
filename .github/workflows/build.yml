@@ -52,6 +52,7 @@ jobs:
           $R "Сквозные тесты: 0.5.0 (ИИ агент)" python tests/e2e/test_v050.py e2e-out/v050
           $R "Сквозные тесты: 0.6.0 (переписка, Word, Excel, изображения)" python tests/e2e/test_v060.py e2e-out/v060
           $R "Сквозные тесты: 0.7.0 (Excel-своды, реестр голосом, голос JARVIS)" python tests/e2e/test_v070.py e2e-out/v070
+          $R "Сквозные тесты: 0.7.1 (произношение, ударения)" python tests/e2e/test_v071.py e2e-out/v071
       - name: Скриншоты и файлы тестов
         if: always()
         uses: actions/upload-artifact@v4

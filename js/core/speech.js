@@ -7,7 +7,7 @@
 // тон, неторопливая скорость.
 
 export const META_VOICE = 'voicePrefs';
-export const DEFAULT_PREFS = Object.freeze({ auto: false, sir: false, voice: '', rate: 0.95, pitch: 0.82 });
+export const DEFAULT_PREFS = Object.freeze({ auto: false, sir: false, accents: false, voice: '', rate: 0.95, pitch: 0.82 });
 export const RATES = [
   { value: 0.85, label: 'Медленно' },
   { value: 0.95, label: 'Обычно' },
@@ -21,6 +21,7 @@ export function normalizePrefs(raw) {
   return {
     auto: p.auto === true,
     sir: p.sir === true,
+    accents: p.accents === true,
     voice: typeof p.voice === 'string' ? p.voice.slice(0, 200) : '',
     rate: Number.isFinite(rate) && rate >= 0.5 && rate <= 2 ? rate : DEFAULT_PREFS.rate,
     pitch: Number.isFinite(pitch) && pitch >= 0.5 && pitch <= 2 ? pitch : DEFAULT_PREFS.pitch,
