@@ -21,7 +21,8 @@
 //                     prefs: { sir } — манера обращения;
 //                     → { text, files: [{ kind: 'table'|'workbook'|'word'|'image'|'text', name, … }],
 //                         drafts: [{ поля реестра, sourceText }] };
-//   POST /v1/parse  — заметки → поля реестра: { notes: [текст] } → { items: [{ поля }] }.
+//   POST /v1/parse  — заметки → поля реестра: { notes: [текст] } → { items: [{ поля }] };
+//   POST /v1/accent — ударения для озвучки: { text } → { text с «+» после ударных гласных }.
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -819,6 +820,30 @@ export function parseItems(text, count) {
   });
 }
 
+// Ударения для синтезатора речи: «+» после ударной гласной. Ответ принимается,
+// только если, кроме знаков ударения, текст не изменился.
+const ACCENT_SYSTEM = [
+  'Ты расставляешь ударения в русском тексте для синтезатора речи.',
+  'Поставь знак + сразу после ударной гласной в каждом русском слове из двух и более слогов. Учитывай смысл: «на двери за+мок» и «старинный замо+к», «все+» и «всё». Над буквой ё знак не ставь.',
+  'Знаки ударения, которые уже стоят в тексте, не трогай и не дублируй.',
+  'Больше ничего не меняй: ни буквы, ни порядок слов, ни пробелы, ни знаки препинания, ни цифры, ни латиницу. Ничего не добавляй и не объясняй. Ответь только этим текстом.',
+].join('\n');
+
+const ACCENT_VOWELS = /([аеёиоуыэюяАЕЁИОУЫЭЮЯ])\+/g;
+export function sameExceptAccents(original, accented) {
+  const plain = (t) => String(t ?? '').replace(/\u0301/g, '').replace(ACCENT_VOWELS, '$1').replace(/\s+/g, ' ').trim();
+  return !!accented && plain(original) === plain(accented);
+}
+
+async function handleAccent(env, data) {
+  const text = String(data?.text ?? '');
+  if (!text.trim() || text.length > 6000) throw new HttpError(400, 'Нужен текст до 6000 знаков.');
+  const result = await callModel(env, { max_tokens: Math.min(8000, text.length * 2 + 200), system: ACCENT_SYSTEM, messages: [{ role: 'user', content: text }] });
+  const out = textOf(result.content);
+  if (!sameExceptAccents(text, out)) throw new HttpError(502, 'Ударения не расставлены.');
+  return { text: out };
+}
+
 async function handleParse(env, data) {
   const notes = Array.isArray(data?.notes) ? data.notes.map((n) => String(n ?? '')).filter(Boolean) : [];
   if (notes.length === 0 || notes.length > 20) throw new HttpError(400, 'Нужно от 1 до 20 заметок.');
@@ -842,6 +867,7 @@ export default {
       if (request.method === 'GET' && pathname === '/v1/health') return json({ ok: true, agent: 'ИИ агент' }, 200, cors);
       if (request.method === 'POST' && pathname === '/v1/chat') return json(await handleChat(env, await readBody(request)), 200, cors);
       if (request.method === 'POST' && pathname === '/v1/parse') return json(await handleParse(env, await readBody(request)), 200, cors);
+      if (request.method === 'POST' && pathname === '/v1/accent') return json(await handleAccent(env, await readBody(request)), 200, cors);
       throw new HttpError(404, 'Нет такого адреса.');
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;

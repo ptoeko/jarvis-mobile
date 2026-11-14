@@ -198,7 +198,7 @@ test('длинный текст делится на части по предло
 
 test('настройки голоса: значения по умолчанию и проверка', () => {
   assert.deepEqual(normalizePrefs(null), { ...DEFAULT_PREFS });
-  assert.deepEqual(normalizePrefs({ auto: true, sir: 'да', rate: 7, voice: 'ru-x', pitch: 0.9 }), { auto: true, sir: false, voice: 'ru-x', rate: 0.95, pitch: 0.9 });
+  assert.deepEqual(normalizePrefs({ auto: true, sir: 'да', rate: 7, voice: 'ru-x', pitch: 0.9 }), { auto: true, sir: false, accents: false, voice: 'ru-x', rate: 0.95, pitch: 0.9 });
 });
 
 test('озвучка и диктовка через Android: части текста, голос, остановка, результат диктовки', async () => {

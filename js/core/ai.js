@@ -98,6 +98,12 @@ export function createAiClient({ url = null, code = null, fetchImpl = globalThis
         drafts: Array.isArray(data.drafts) ? data.drafts.filter((d) => d && typeof d === 'object') : [],
       };
     },
+    // Ударения для озвучки: текст → текст с «+» после ударных гласных.
+    async accent(text) {
+      const data = await request('/v1/accent', { body: { text } });
+      if (typeof data.text !== 'string') throw new AiError('Ударения не расставлены.');
+      return data.text;
+    },
     // notes: [текст] → [{ поля реестра }]
     async parse(notes) {
       const data = await request('/v1/parse', { body: { notes } });
