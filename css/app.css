@@ -247,7 +247,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .fields { display: flex; flex-direction: column; gap: 10px; }
 .field label { display: block; margin-bottom: 3px; font-size: 0.8125rem; color: var(--muted); }
 .field input::placeholder, .field textarea::placeholder { color: var(--muted); opacity: 1; }
-.field input, .field textarea {
+.field input, .field textarea, .field select {
   width: 100%;
   min-height: 44px;
   padding: 9px 10px;
@@ -419,7 +419,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 .icon-btn {
   min-height: var(--tap);
   min-width: var(--tap);
-  margin-right: auto;
   display: inline-grid;
   place-items: center;
   border: 1px solid var(--line);
@@ -530,3 +529,14 @@ button:disabled { opacity: 0.5; cursor: default; }
 .archive-messages .msg { max-width: 100%; }
 
 .msg-text a { color: var(--focus); text-decoration: underline; overflow-wrap: anywhere; }
+
+/* Голос: микрофон, озвучка, настройки */
+.composer-actions .secondary { margin-left: auto; }
+.field select { color: var(--text); font: inherit; }
+#mic.active { border-color: var(--signal); background: color-mix(in srgb, var(--signal) 18%, transparent); }
+#mic.active svg { stroke: var(--signal); }
+.speak-btn.active { border-color: var(--signal); }
+.speak-btn.active svg { stroke: var(--signal); }
+.check { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-top: 6px; cursor: pointer; }
+.check input { width: 22px; height: 22px; accent-color: var(--signal); flex: none; }
+#voice-group .fields { margin-top: 8px; }

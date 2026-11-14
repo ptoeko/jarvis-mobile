@@ -67,7 +67,7 @@ test('переписка: роль «ИИ агент», модель из нас
     assert.deepEqual(data.files, []);
     const sent = m.calls[0];
     assert.equal(sent.body.model, 'test-model');
-    assert.match(sent.body.system, /Никогда не называй модель/);
+    assert.match(sent.body.system, /Я JARVIS, мой разработчик — AYRAT\./);
     assert.equal(sent.headers['x-api-key'], 'sk-test');
     assert.ok(!JSON.stringify(data).includes('sk-test'));
   } finally { m.restore(); }

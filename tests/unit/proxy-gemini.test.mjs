@@ -47,13 +47,13 @@ test('переписка через Gemini: адрес модели, ключ в
     const res = await worker.fetch(req('/v1/chat', { body: { messages: [{ role: 'user', text: 'Кто ты?' }] } }), ENV);
     const data = await res.json();
     assert.equal(res.status, 200);
-    assert.deepEqual(data, { text: 'Я ИИ агент JARVIS.', files: [] });
+    assert.deepEqual(data, { text: 'Я ИИ агент JARVIS.', files: [], drafts: [] });
     const c = m.calls[0];
     assert.equal(c.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-test-flash:generateContent');
     assert.equal(c.headers['x-goog-api-key'], 'gm-test-key');
-    assert.match(c.body.systemInstruction.parts[0].text, /Никогда не называй модель/);
+    assert.match(c.body.systemInstruction.parts[0].text, /Я JARVIS, мой разработчик — AYRAT\./);
     assert.deepEqual(c.body.contents, [{ role: 'user', parts: [{ text: 'Кто ты?' }] }]);
-    assert.equal(c.body.tools[0].functionDeclarations.map((f) => f.name).join(','), 'create_table,create_text_file,create_word_document,web_search,create_image');
+    assert.equal(c.body.tools[0].functionDeclarations.map((f) => f.name).join(','), 'create_table,create_text_file,create_word_document,web_search,create_excel_workbook,add_to_registry,create_image');
     assert.ok(!JSON.stringify(data).includes('gm-test-key'));
   } finally { m.restore(); }
 });
@@ -186,9 +186,9 @@ test('фильтр применяется к ответу агента и к с�
   try {
     const res = await worker.fetch(req('/v1/chat', { body: { messages: [{ role: 'user', text: 'Кто ты?' }] } }), ENV);
     const data = await res.json();
-    assert.equal(data.text, 'Я ИИ агент JARVIS, модель, разработанная для JARVIS.');
+    assert.equal(data.text, 'Я JARVIS, модель, разработанная AYRAT.');
     assert.doesNotMatch(JSON.stringify(data.files), /gemini|google/i);
-    assert.equal(data.files[0].name, 'Отчёт ИИ агент JARVIS.xlsx');
+    assert.equal(data.files[0].name, 'Отчёт JARVIS.xlsx');
   } finally { m.restore(); }
 });
 

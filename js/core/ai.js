@@ -88,12 +88,14 @@ export function createAiClient({ url = null, code = null, fetchImpl = globalThis
       return true;
     },
     // history: [{ role: 'user'|'assistant', text, files: [{ name, type, data(base64) }] }]
-    // → { text, files: [{ kind: 'table'|'text', name, … }] }
-    async chat(history) {
-      const data = await request('/v1/chat', { body: { messages: history } });
+    // prefs: { sir } — манера обращения.
+    // → { text, files: [{ kind, name, … }], drafts: [{ поля реестра, sourceText }] }
+    async chat(history, prefs = {}) {
+      const data = await request('/v1/chat', { body: { messages: history, prefs: { sir: prefs.sir === true } } });
       return {
         text: typeof data.text === 'string' ? data.text : '',
         files: Array.isArray(data.files) ? data.files : [],
+        drafts: Array.isArray(data.drafts) ? data.drafts.filter((d) => d && typeof d === 'object') : [],
       };
     },
     // notes: [текст] → [{ поля реестра }]

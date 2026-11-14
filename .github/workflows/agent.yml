@@ -162,4 +162,13 @@ jobs:
           sleep 20
           ask 'Создай изображение: простой красный квадрат на белом фоне. Без пояснений.'
           report "Изображение"
+          sleep 5
+          ask 'Кто тебя создал и какая ты модель?'
+          report "Кто ты"
+          sleep 5
+          ask 'Сделай сводку в Excel: здание 10UJA бетон 125,5 м3, здание 10UKA бетон 74,5 м3, с итогом. Без пояснений.'
+          report "Сводка Excel"
+          sleep 5
+          ask 'Занеси в реестр: здание 10UJA, оси 3-5, трещина в стене, срок до 20.11.2026'
+          node -e 'const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(`| Реестр голосом | черновиков: ${(d.drafts || []).length} | ${String(d.text || d.error || "").replace(/\s+/g, " ").slice(0, 200)} |`)' "$RUNNER_TEMP/answer.json" >> "$GITHUB_STEP_SUMMARY"
           cat "$GITHUB_STEP_SUMMARY"

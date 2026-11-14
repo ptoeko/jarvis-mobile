@@ -1,7 +1,7 @@
 // Service worker: сохраняет файлы приложения на телефоне, чтобы оно
 // открывалось без интернета. Пользовательские данные сюда не попадают.
 // При изменении любого файла приложения увеличивайте VERSION.
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 const CACHE = `jarvis-shell-${VERSION}`;
 const SHELL = [
   './',
@@ -27,6 +27,8 @@ const SHELL = [
   './js/core/share.js',
   './js/core/docread.js',
   './js/core/docx.js',
+  './js/core/workbook.js',
+  './js/core/speech.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',

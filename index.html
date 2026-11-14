@@ -76,7 +76,7 @@
         <ol class="messages" id="messages" aria-live="polite"></ol>
         <div class="empty" id="messages-empty" hidden>
           <p class="empty-title">История пуста</p>
-          <p>Напишите заметку и нажмите «В реестр» или напишите «помощь», чтобы узнать, что уже работает. Для голоса нажмите микрофон на клавиатуре телефона.</p>
+          <p>Напишите или продиктуйте (кнопка микрофона) заметку и нажмите «В реестр» — или напишите «помощь», чтобы узнать, что уже работает.</p>
         </div>
         <form class="composer" id="composer" novalidate>
           <label for="input" class="visually-hidden">Сообщение или заметка</label>
@@ -91,6 +91,9 @@
             <input type="file" id="attach-input" multiple hidden>
             <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
             <input type="file" id="video-input" accept="video/*" capture="environment" hidden>
+            <button type="button" class="icon-btn" id="mic" aria-label="Продиктовать голосом" title="Продиктовать" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></svg>
+            </button>
             <button type="button" class="secondary" id="parse">В реестр</button>
             <button type="submit" class="send" id="send">Отправить</button>
           </div>
@@ -146,6 +149,27 @@
               <button type="button" class="secondary" id="ai-disconnect" hidden>Отключить</button>
             </div>
           </form>
+        </div>
+
+        <div class="group" id="voice-group">
+          <h3>Голос JARVIS</h3>
+          <p class="value" id="voice-state">—</p>
+          <p class="note" id="voice-note"></p>
+          <div class="fields">
+            <div class="field">
+              <label for="voice-select">Голос</label>
+              <select id="voice-select"></select>
+            </div>
+            <div class="field">
+              <label for="voice-rate">Скорость речи</label>
+              <select id="voice-rate"></select>
+            </div>
+          </div>
+          <label class="check"><input type="checkbox" id="voice-auto"> Читать ответы вслух автоматически</label>
+          <label class="check"><input type="checkbox" id="voice-sir"> Обращаться ко мне «сэр»</label>
+          <div class="row-actions">
+            <button type="button" class="secondary" id="voice-test">Прослушать</button>
+          </div>
         </div>
 
         <div class="group">
