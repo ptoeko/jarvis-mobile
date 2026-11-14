@@ -82,6 +82,7 @@ def confirmed_draft_does_not_come_back(page, ctx):
 def delete_history_clears_drafts(page, ctx):
     parse_notes(page, N2)
     page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="data"]')
     page.click('#delete-history')
     page.click('#confirm-delete button[value="delete"]')
     expect(page.locator('#toast')).to_have_text('История удалена')
@@ -142,6 +143,7 @@ def upgrade_from_030(browser, device):
         srv.root = base.ROOT  # новая версия на том же адресе
         page.reload()
         page.wait_for_selector(f'html[data-ready="true"][data-version="{base.APP_VERSION}"]', timeout=30000)
+        base.unlock(page)
         open_registry(page)
         expect(page.locator('.record-row')).to_have_count(1)
         expect(page.locator('.record-row td[data-field="sourceText"]')).to_have_text(N1)

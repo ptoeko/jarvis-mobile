@@ -9,6 +9,7 @@ import { documentText, canRead } from './core/docread.js';
 import { buildDocx, DOCX_MIME } from './core/docx.js';
 import { buildWorkbook } from './core/workbook.js';
 import { createSpeech, normalizePrefs, speechText, META_VOICE, RATES } from './core/speech.js';
+import { createLock, PIN_LENGTH, RELOCK_AFTER_MS } from './core/lock.js';
 import { applyDictionary, acceptAccents, normalizeDictionary, normalizeEntry, META_PRONOUNCE } from './core/pronounce.js';
 import { createAiClient, AiError, normalizeAgentUrl, validAccessCode, blobToBase64, META_AI_URL, META_AI_CODE, AI_LABEL } from './core/ai.js';
 import { computeFeatures, statusSummary, STATE_LABELS } from './core/status.js';
@@ -21,7 +22,9 @@ import { messageShare, recordShare, registryShare, targetLabel } from './core/sh
 import { ACCEPT, checkFiles, formatSize, kindLabel, attachmentRefs } from './core/attachments.js';
 import { createBackup, inspectBackup, restoreBackup, backupFileName, BackupError, META_LAST_BACKUP } from './core/backup.js';
 
-const SCREENS = ['dialog', 'registry', 'settings', 'status'];
+const SCREENS = ['dialog', 'registry', 'settings'];
+// Разделы «Настроек»: адрес #settings, #data, #status.
+const PANES = { settings: 'main', data: 'data', status: 'status' };
 const FIELD = Object.fromEntries(REGISTRY_FIELDS.map((f) => [f.key, f]));
 const $ = (id) => document.getElementById(id);
 
@@ -173,8 +176,19 @@ function ask(dialog) {
 }
 
 // ---------- Экраны ----------
+function showPane(pane) {
+  for (const p of document.querySelectorAll('#screen-settings .pane')) p.hidden = p.dataset.pane !== pane;
+  for (const t of document.querySelectorAll('.subtab')) {
+    const on = t.dataset.pane === pane;
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+    t.tabIndex = on ? 0 : -1;
+  }
+}
+
 function showScreen(name) {
-  const target = SCREENS.includes(name) ? name : 'dialog';
+  const pane = PANES[name];
+  const target = pane ? 'settings' : SCREENS.includes(name) ? name : 'dialog';
+  if (pane) showPane(pane);
   for (const section of document.querySelectorAll('.screen')) {
     section.hidden = section.dataset.screen !== target;
   }
@@ -184,8 +198,10 @@ function showScreen(name) {
     else tab.removeAttribute('aria-current');
   }
   $('main').scrollTop = target === 'dialog' ? $('main').scrollHeight : 0;
-  if (target === 'status') renderStatus();
-  if (target === 'settings') renderSettings();
+  if (target === 'settings') {
+    renderSettings();
+    renderStatus();
+  }
   if (target === 'registry') renderRegistry();
 }
 
@@ -1566,6 +1582,236 @@ function renderStatus() {
   $('features').replaceChildren(...items);
 }
 
+// ---------- Код входа ----------
+// Режимы окна: setup → setup2 (придумать и повторить), unlock (вход),
+// old → setup → setup2 (смена кода в Настройках).
+let lock;
+const lockState = { mode: null, digits: '', first: '', busy: false, resolve: null, timer: null };
+const LOCK_TITLES = {
+  setup: 'Придумайте код из 4 цифр',
+  setup2: 'Повторите код',
+  unlock: 'Введите код',
+  old: 'Введите текущий код',
+};
+
+function renderLock() {
+  $('lock-title').textContent = LOCK_TITLES[lockState.mode] || '';
+  const dots = $('lock-dots').children;
+  for (let i = 0; i < dots.length; i++) dots[i].classList.toggle('on', i < lockState.digits.length);
+  $('lock-forgot').hidden = lockState.mode !== 'unlock';
+  const changing = lockState.change === true;
+  $('lock-cancel').hidden = !changing;
+  $('lock-gap').hidden = changing;
+}
+
+function lockMessage(text, error = false) {
+  $('lock-message').textContent = text || '';
+  $('lock-message').classList.toggle('error', !!error);
+}
+
+function setLockKeys(enabled) {
+  for (const b of document.querySelectorAll('#lock-keys button')) b.disabled = !enabled;
+}
+
+// Пауза после неверных попыток: кнопки недоступны, идёт обратный отсчёт.
+function lockPause(seconds) {
+  clearInterval(lockState.timer);
+  let left = seconds;
+  setLockKeys(false);
+  const tick = () => {
+    if (left <= 0) {
+      clearInterval(lockState.timer);
+      setLockKeys(true);
+      lockMessage('');
+      return;
+    }
+    lockMessage(`Много неверных попыток. Повторите через ${left} с.`, true);
+    left--;
+  };
+  tick();
+  lockState.timer = setInterval(tick, 1000);
+}
+
+function showLock(mode, { change = false } = {}) {
+  lockState.mode = mode;
+  lockState.change = change;
+  lockState.digits = '';
+  lockState.first = '';
+  lockMessage(mode === 'setup' && !change ? 'Код будет спрашиваться при каждом запуске JARVIS.' : '');
+  renderLock();
+  $('lock').hidden = false;
+  document.querySelector('.app').inert = true;
+  document.documentElement.dataset.locked = 'true';
+  return new Promise((resolve) => { lockState.resolve = resolve; });
+}
+
+function hideLock(result) {
+  clearInterval(lockState.timer);
+  setLockKeys(true);
+  $('lock').hidden = true;
+  document.querySelector('.app').inert = false;
+  delete document.documentElement.dataset.locked;
+  lockState.mode = null;
+  const resolve = lockState.resolve;
+  lockState.resolve = null;
+  resolve?.(result);
+}
+
+async function lockDigit(key) {
+  if (lockState.busy || !lockState.mode) return;
+  if (key === 'back') {
+    lockState.digits = lockState.digits.slice(0, -1);
+    renderLock();
+    return;
+  }
+  if (lockState.digits.length >= PIN_LENGTH) return;
+  lockState.digits += key;
+  renderLock();
+  if (lockState.digits.length < PIN_LENGTH) return;
+  const pin = lockState.digits;
+  lockState.busy = true;
+  try {
+    await lockSubmit(pin);
+  } finally {
+    lockState.busy = false;
+  }
+}
+
+async function lockSubmit(pin) {
+  const mode = lockState.mode;
+  if (mode === 'setup') {
+    if (/^(\d)\1{3}$/.test(pin) || '0123456789'.includes(pin) || '9876543210'.includes(pin)) {
+      lockState.digits = '';
+      renderLock();
+      lockMessage('Слишком простой код (1111, 1234). Придумайте другой.', true);
+      return;
+    }
+    lockState.first = pin;
+    lockState.mode = 'setup2';
+    lockState.digits = '';
+    lockMessage('');
+    renderLock();
+    return;
+  }
+  if (mode === 'setup2') {
+    if (pin !== lockState.first) {
+      lockState.mode = 'setup';
+      lockState.digits = '';
+      lockState.first = '';
+      renderLock();
+      lockMessage('Коды не совпали. Придумайте код ещё раз.', true);
+      return;
+    }
+    await lock.set(pin);
+    hideLock('set');
+    toast(lockState.change ? 'Код входа изменён' : 'Код входа сохранён');
+    return;
+  }
+  // unlock и old: проверка кода.
+  const r = await lock.verify(pin);
+  lockState.digits = '';
+  if (r.ok) {
+    if (mode === 'old') {
+      lockState.mode = 'setup';
+      lockMessage('');
+      renderLock();
+      return;
+    }
+    hideLock('ok');
+    return;
+  }
+  renderLock();
+  $('lock-dots').classList.remove('shake');
+  void $('lock-dots').offsetWidth;
+  $('lock-dots').classList.add('shake');
+  if (r.wait) lockPause(r.wait);
+  else lockMessage(`Неверный код. Осталось попыток до паузы: ${r.left}.`, true);
+}
+
+async function requireUnlock() {
+  if (!(await lock.isSet())) {
+    await showLock('setup');
+    return;
+  }
+  const pending = showLock('unlock');
+  const pause = await lock.pause();
+  if (pause) lockPause(pause);
+  await pending;
+}
+
+// При запуске окно кода показывается сразу, до чтения переписки.
+async function requireUnlockStart() {
+  if (!(await lock.isSet())) {
+    showLock('setup');
+    return;
+  }
+  showLock('unlock');
+  const pause = await lock.pause();
+  if (pause) lockPause(pause);
+}
+
+async function changePin() {
+  await showLock('old', { change: true });
+}
+
+async function forgotPin() {
+  if ((await ask($('confirm-pin-reset'))) !== 'reset') return;
+  try {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+    await store.clearHistory();
+    drafts = [];
+    for (const key of [META_AI_URL, META_AI_CODE, META_VOICE, META_PRONOUNCE]) await store.setMeta(key, null);
+    await lock.reset();
+    await loadAi();
+    await loadVoicePrefs();
+    await renderMessages();
+    renderDrafts();
+    clearInterval(lockState.timer);
+    setLockKeys(true);
+    lockState.mode = 'setup';
+    lockState.change = false;
+    lockState.digits = '';
+    renderLock();
+    lockMessage('Данные удалены. Придумайте новый код.');
+  } catch (e) {
+    console.error(e);
+    lockMessage('Не удалось сбросить. Перезапустите приложение и повторите.', true);
+  }
+}
+
+// После 5 минут в фоне — снова код.
+let hiddenAt = 0;
+function watchBackground() {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      hiddenAt = Date.now();
+      return;
+    }
+    if (hiddenAt && Date.now() - hiddenAt > RELOCK_AFTER_MS && !lockState.mode) {
+      speech.stop();
+      for (const d of document.querySelectorAll('dialog[open]')) d.close('cancel');
+      requireUnlock();
+    }
+    hiddenAt = 0;
+  });
+}
+
+function initLockUi() {
+  for (const b of document.querySelectorAll('#lock-keys button[data-key]')) {
+    b.addEventListener('click', () => lockDigit(b.dataset.key));
+  }
+  $('lock-cancel').addEventListener('click', () => hideLock('cancel'));
+  $('lock-forgot').addEventListener('click', forgotPin);
+  // Цифры с клавиатуры (компьютер, внешняя клавиатура).
+  document.addEventListener('keydown', (e) => {
+    if ($('lock').hidden || document.querySelector('dialog[open]')) return;
+    if (/^\d$/.test(e.key)) lockDigit(e.key);
+    else if (e.key === 'Backspace') lockDigit('back');
+  });
+  $('pin-change').addEventListener('click', changePin);
+}
+
 // ---------- Запуск ----------
 // Enter отправляет только на компьютере (мышь и клавиатура). На телефоне
 // Enter переносит строку, чтобы можно было разделять заметки пустой строкой.
@@ -1574,6 +1820,14 @@ const desktopEnter = window.matchMedia('(hover: hover) and (pointer: fine)');
 // Кнопка «Назад» в APK: сначала закрывает открытое окно. Возвращает true,
 // если нажатие обработано; иначе оболочка возвращает к предыдущему экрану.
 function handleBack() {
+  // Окно кода не закрывается кнопкой «Назад»: Android сворачивает приложение.
+  if (!$('lock').hidden && !document.querySelector('dialog[open]')) {
+    if (lockState.change) {
+      hideLock('cancel');
+      return true;
+    }
+    return false;
+  }
   const open = [...document.querySelectorAll('dialog[open]')].pop();
   if (open) {
     open.close('cancel');
@@ -1592,6 +1846,10 @@ async function start() {
   for (const tab of document.querySelectorAll('.tab')) {
     tab.addEventListener('click', () => goTo(tab.dataset.target));
   }
+  for (const sub of document.querySelectorAll('.subtab')) {
+    sub.addEventListener('click', () => goTo(sub.dataset.pane === 'main' ? 'settings' : sub.dataset.pane));
+  }
+  initLockUi();
   window.addEventListener('hashchange', () => showScreen(currentRoute()));
   window.addEventListener('online', renderStatus);
   window.addEventListener('offline', renderStatus);
@@ -1655,6 +1913,10 @@ async function start() {
   $('record-dialog').addEventListener('close', () => { openRecordId = null; });
 
   store = await initStore();
+  lock = createLock(store);
+  // Код входа — до показа переписки. Экран кода закрывает приложение целиком.
+  await requireUnlockStart();
+  watchBackground();
   await loadAi();
   await loadVoicePrefs();
   speech.status(); // синтезатор начинает загружаться заранее

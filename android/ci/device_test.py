@@ -191,12 +191,36 @@ N1 = 'Ось 3/Б, отм. +6.000 — раковины "до 5 мм". Подря
 N2 = 'Пом. 2.15: трещина в стяжке'
 
 
+TEST_PIN = '2580'
+
+
+def unlock(page):
+    """Код входа (0.8.0+): при первом запуске — создать, потом — ввести."""
+    page.wait("document.querySelector('#lock') !== null", 10, 'окно кода')
+    if page.js("document.querySelector('#lock').hidden"):
+        return
+    press = ''.join(f"document.querySelector('#lock-keys button[data-key=\"{d}\"]').click();" for d in TEST_PIN)
+    if page.js("document.querySelector('#lock-title').textContent") == 'Придумайте код из 4 цифр':
+        page.js(f'(() => {{ {press} }})()')
+        page.wait("document.querySelector('#lock-title').textContent === 'Повторите код'", 10, 'повтор кода')
+    page.js(f'(() => {{ {press} }})()')
+    page.wait("document.querySelector('#lock').hidden", 15, 'вход по коду')
+
+
+def unlock_ui():
+    """Ввод кода нажатиями на экран (для подписанного APK без отладки страницы)."""
+    for d in TEST_PIN:
+        tap_text(d)
+
+
 def full():
     adb('install', '-r', APK)
     adb('logcat', '-c')
     start_app()
     page = Page()
     page.wait('document.documentElement.dataset.ready === "true"', 30, 'запуск приложения')
+    shot('lock')
+    unlock(page)
     shot('start')
     assert page.js("document.querySelector('#mode-line').textContent") == 'Демо-режим: ИИ не подключён'
     page.js("location.hash = 'settings'")
@@ -260,6 +284,8 @@ def full():
     start_app()
     page = Page()
     page.wait('document.documentElement.dataset.ready === "true"', 30, 'повторный запуск')
+    assert page.js("!document.querySelector('#lock').hidden"), 'после перезапуска не спрошен код'
+    unlock(page)
     page.js("location.hash = 'registry'")
     page.wait("document.querySelectorAll('.record-row').length === 1", 10, 'запись после перезапуска')
     page.wait("document.querySelectorAll('.draft').length === 1", 10, 'черновик после перезапуска')
@@ -405,6 +431,7 @@ def files_flow(csv_bytes):
     start_app()
     page = Page()
     page.wait('document.documentElement.dataset.ready === "true"', 30, 'запуск')
+    unlock(page)
     page.js("location.hash = 'dialog'")
 
     # Прикрепить сохранённый ранее CSV (вид «Excel») через системное окно.
@@ -557,7 +584,7 @@ def smoke():
         adb('install', APK)
         adb('logcat', '-c')
         start_app()
-        wait_ui_text('Демо-режим', 60)
+        wait_ui_text('Придумайте код из 4 цифр', 60)
         shot('release-start')
         time.sleep(3)
         assert adb('shell', 'pidof', PKG, check=False).strip(), 'приложение не запущено'
@@ -574,7 +601,9 @@ def update():
     def run():
         stop_app()
         start_app()
-        wait_ui_text('Демо-режим', 60)
+        wait_ui_text('Введите код', 60)
+        unlock_ui()
+        wait_ui_text('Демо-режим', 30)
         tap_text('Реестр')
         wait_ui_text('Записей: 1', 30)
     with_system_kill_retry('update', run)

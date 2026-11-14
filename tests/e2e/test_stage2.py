@@ -63,8 +63,29 @@ def case(fn):
     return fn
 
 
-def ready(page):
+TEST_PIN = '2580'
+
+
+def ready(page, pin=TEST_PIN):
+    """Приложение запущено и открыто: код входа введён (при первом запуске — создан)."""
     page.wait_for_selector('html[data-ready="true"]')
+    unlock(page, pin)
+
+
+def press_pin(page, pin):
+    for d in pin:
+        page.click(f'#lock-keys button[data-key="{d}"]')
+
+
+def unlock(page, pin=TEST_PIN):
+    lock = page.locator('#lock')
+    if not lock.is_visible():
+        return
+    if page.locator('#lock-title').inner_text() == 'Придумайте код из 4 цифр':
+        press_pin(page, pin)
+        page.wait_for_selector('#lock-title:text("Повторите код")')
+    press_pin(page, pin)
+    page.wait_for_selector('#lock', state='hidden')
 
 
 def parse_notes(page, text):
@@ -320,14 +341,17 @@ def status_and_settings_reflect_stage2(page, srv, ctx):
     parse_notes(page, N2)
     draft(page, 0).get_by_role('button', name='Добавить в реестр').click()
     page.click('.tab[data-target="settings"]')
-    expect(page.locator('#count-records')).to_have_text('1')
+    page.click('.subtab[data-pane="status"]')
     expect(page.locator('#app-version')).to_have_text(APP_VERSION)
     expect(page.locator('#app-platform')).to_have_text('Веб-приложение')
     expect(page.locator('#app-stage')).to_have_text('Этап 2 из 5')
+    page.click('.subtab[data-pane="data"]')
+    expect(page.locator('#count-records')).to_have_text('1')
     page.click('#delete-history')
     page.click('#confirm-delete button[value="delete"]')
     expect(page.locator('#count-records')).to_have_text('0')
-    page.click('.tab[data-target="status"]')
+    page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="status"]')
     expect(page.locator('[data-feature="registry"] .state')).to_have_text('По правилам')
     expect(page.locator('[data-feature="dialog"] .state')).to_have_text('Демо')
     expect(page.locator('[data-feature="ai"] .state')).to_have_text('Не подключён')
@@ -399,6 +423,7 @@ def upgrade_from_stage1(browser, device):
         # Первая загрузка может пройти со старыми файлами из кеша 0.1.0; новая
         # версия кеша берёт управление и один раз перезагружает страницу.
         page.wait_for_selector(f'html[data-ready="true"][data-version="{APP_VERSION}"]', timeout=30000)
+        unlock(page)
         expect(page.locator('.msg-user .msg-text')).to_have_text(['старое сообщение 1', 'старое сообщение 2'])
         info = page.evaluate('''async () => {
             const db = await new Promise(r => { const q = indexedDB.open('jarvis-mobile'); q.onsuccess = () => r(q.result); });
@@ -422,6 +447,7 @@ def upgrade_from_stage1(browser, device):
         ctx.set_offline(True)
         page.reload()
         page.wait_for_selector(f'html[data-ready="true"][data-version="{APP_VERSION}"]')
+        unlock(page)
         expect(page.locator('#screen-registry')).to_be_visible()
         expect(page.locator('.record-row')).to_have_count(1)
         ctx.set_offline(False)

@@ -125,7 +125,8 @@ def connect_validation_and_success(page, ctx, agent):
     page.reload()
     base.ready(page)
     expect(page.locator('#mode-line')).to_have_text('ИИ агент подключён')  # сохранено
-    page.click('.tab[data-target="status"]')
+    page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="status"]')
     expect(page.locator('[data-feature="ai"] .state')).to_have_text('Работает')
     expect(page.locator('[data-feature="registry"] .state')).to_have_text('ИИ агент')
     no_vendor_names(page)
@@ -227,6 +228,7 @@ def access_code_not_in_backup(page, ctx, agent):
     page.click('#send')
     expect(page.locator('.msg-assistant')).to_have_count(1)
     page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="data"]')
     with page.expect_download() as dl:
         page.click('#backup-save')
     path = OUT / 'backup-ai.zip'
