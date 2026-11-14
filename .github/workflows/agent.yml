@@ -65,6 +65,8 @@ jobs:
           PICK=$(node proxy/pick-gemini-model.mjs)
           MODEL=$(node -e "console.log(JSON.parse(process.argv[1]).model)" "$PICK")
           IMAGE_MODEL=$(node -e "console.log(JSON.parse(process.argv[1]).imageModel || '')" "$PICK")
+          FALLBACK=$(node -e "console.log((JSON.parse(process.argv[1]).fallback || []).join(','))" "$PICK")
+          echo "fallback=$FALLBACK" >> "$GITHUB_OUTPUT"
           echo "provider=gemini" >> "$GITHUB_OUTPUT"
           echo "model=$MODEL" >> "$GITHUB_OUTPUT"
           echo "image_model=$IMAGE_MODEL" >> "$GITHUB_OUTPUT"
@@ -81,10 +83,11 @@ jobs:
           PROVIDER: ${{ steps.model.outputs.provider }}
           GEMINI_MODEL: ${{ steps.model.outputs.model }}
           GEMINI_IMAGE_MODEL: ${{ steps.model.outputs.image_model }}
+          GEMINI_FALLBACK_MODELS: ${{ steps.model.outputs.fallback }}
         run: |
           set -o pipefail
           if [ "$PROVIDER" = "gemini" ]; then
-            npx --yes wrangler@4 deploy --var "PROVIDER:gemini" --var "GEMINI_MODEL:$GEMINI_MODEL" --var "GEMINI_IMAGE_MODEL:$GEMINI_IMAGE_MODEL" 2>&1 | tee deploy.log
+            npx --yes wrangler@4 deploy --var "PROVIDER:gemini" --var "GEMINI_MODEL:$GEMINI_MODEL" --var "GEMINI_IMAGE_MODEL:$GEMINI_IMAGE_MODEL" --var "GEMINI_FALLBACK_MODELS:$GEMINI_FALLBACK_MODELS" 2>&1 | tee deploy.log
             printf '%s' "$GEMINI_KEY" | npx --yes wrangler@4 secret put GEMINI_API_KEY
           else
             npx --yes wrangler@4 deploy --var "PROVIDER:anthropic" 2>&1 | tee deploy.log
@@ -148,6 +151,8 @@ jobs:
           echo "| Проверка | Файлы | Ответ |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
           report "Документ Word" "$(ask 'Создай документ Word с именем Проверка: заголовок Проверка и один абзац Тест. Без пояснений.')"
+          sleep 20
           report "Поиск в интернете" "$(ask 'Найди в интернете официальный сайт Минстроя России. Ответь одной строкой со ссылкой.')"
+          sleep 20
           report "Изображение" "$(ask 'Создай изображение: простой красный квадрат на белом фоне. Без пояснений.')"
           cat "$GITHUB_STEP_SUMMARY"

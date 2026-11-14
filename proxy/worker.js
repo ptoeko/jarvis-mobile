@@ -331,27 +331,51 @@ async function geminiError(response) {
   return new HttpError(502, 'ИИ агент временно перегружен. Повторите через минуту.');
 }
 
-async function callGemini(env, body) {
-  const model = String(env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL).replace(/^models\//, '');
-  let response;
-  try {
-    response = await fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-      body: JSON.stringify(toGeminiRequest(body)),
-    });
-  } catch {
-    throw new HttpError(502, 'ИИ агент недоступен. Повторите позже.');
+// Модели по порядку: основная, затем запасные. На бесплатном ключе у каждой
+// модели свой лимит запросов, поэтому при «лимит исчерпан» (429) или
+// «перегружена» (503) запрос повторяется на следующей модели.
+export function geminiModels(env) {
+  const list = [env.GEMINI_MODEL, ...String(env.GEMINI_FALLBACK_MODELS || '').split(',')]
+    .map((m) => String(m || '').trim().replace(/^models\//, ''))
+    .filter(Boolean);
+  return list.length ? [...new Set(list)] : [GEMINI_DEFAULT_MODEL];
+}
+
+// Запрос к Gemini с переходом на запасные модели. Возвращает { response, model }.
+export async function geminiFetch(env, payload, models = geminiModels(env)) {
+  let lastError = null;
+  for (const model of models) {
+    let response;
+    try {
+      response = await fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      lastError = new HttpError(502, 'ИИ агент недоступен. Повторите позже.');
+      continue;
+    }
+    if (response.ok) return { response, model };
+    lastError = await geminiError(response);
+    if (![404, 429, 500, 502, 503, 504].includes(response.status) && lastError.status !== 429) throw lastError;
   }
-  if (!response.ok) throw await geminiError(response);
-  return fromGeminiResponse(await response.json());
+  throw lastError || new HttpError(502, 'ИИ агент недоступен. Повторите позже.');
+}
+
+async function callGemini(env, body) {
+  // В пределах одного ответа с инструментами используется одна модель
+  // (подписи рассуждения действительны только для неё).
+  const models = body.pinModel ? [body.pinModel] : geminiModels(env);
+  const { response, model } = await geminiFetch(env, toGeminiRequest(body), models);
+  return { ...fromGeminiResponse(await response.json()), model };
 }
 
 // ---------- Вызов ИИ ----------
 
 async function callModel(env, body) {
   if (providerOf(env) === 'gemini') return callGemini(env, body);
-  const { json: _json, ...anthropicBody } = body; // json — подсказка только для Gemini
+  const { json: _json, pinModel: _pin, ...anthropicBody } = body; // подсказки только для Gemini
   let response;
   try {
     response = await fetch(API_URL, {
@@ -505,22 +529,11 @@ async function resolveLink(url) {
 }
 
 async function searchGemini(env, query) {
-  const model = String(env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL).replace(/^models\//, '');
-  let response;
-  try {
-    response = await fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: `Найди в интернете и кратко изложи факты с датами и цифрами: ${query}` }] }],
-        tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: 6000 },
-      }),
-    });
-  } catch {
-    throw new HttpError(502, 'Поиск недоступен.');
-  }
-  if (!response.ok) throw await geminiError(response);
+  const { response } = await geminiFetch(env, {
+    contents: [{ role: 'user', parts: [{ text: `Найди в интернете и кратко изложи факты с датами и цифрами: ${query}` }] }],
+    tools: [{ google_search: {} }],
+    generationConfig: { maxOutputTokens: 6000 },
+  });
   const data = await response.json();
   const cand = data?.candidates?.[0];
   const text = (cand?.content?.parts || []).filter((p) => !p.thought && typeof p.text === 'string').map((p) => p.text).join('\n').trim();
@@ -631,8 +644,10 @@ async function handleChat(env, data) {
   const files = [];
   const texts = [];
   const sources = [];
+  let pinModel = null;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const result = await callModel(env, { max_tokens: 16000, system: CHAT_SYSTEM, tools: TOOLS, messages });
+    const result = await callModel(env, { max_tokens: 16000, system: CHAT_SYSTEM, tools: TOOLS, messages, ...(pinModel ? { pinModel } : {}) });
+    if (result.model) pinModel = result.model;
     const t = textOf(result.content);
     if (t) texts.push(t);
     const uses = (result.content || []).filter((b) => b.type === 'tool_use');

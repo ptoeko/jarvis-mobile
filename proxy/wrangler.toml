@@ -12,4 +12,5 @@ workers_dev = true
 MODEL = "claude-sonnet-5-5"
 GEMINI_MODEL = "gemini-flash-latest"
 GEMINI_IMAGE_MODEL = ""
+GEMINI_FALLBACK_MODELS = ""
 ALLOWED_ORIGINS = "https://appassets.androidplatform.net"
