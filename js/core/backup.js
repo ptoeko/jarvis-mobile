@@ -7,6 +7,7 @@
 // Перед восстановлением файл проверяется целиком. Восстановление заменяет
 // данные на телефоне одной транзакцией: при сбое остаются прежние данные.
 
+import { META_PIN } from './lock.js';
 import { REGISTRY_FIELDS, EDITABLE_FIELDS, NOT_SPECIFIED, APP_VERSION } from './config.js';
 import { ROLES, SOURCES, META_NEXT_NUMBER, META_DRAFTS } from './store.js';
 import { restoreDraft } from './records.js';
@@ -14,9 +15,9 @@ import { attachmentRefs, cleanFileName, mimeOf, formatSize } from './attachments
 import { createZip, readZip, crc32Blob, ZipError } from './zip.js';
 import { META_AI_URL, META_AI_CODE } from './ai.js';
 
-// Настройки ИИ агента (адрес и код доступа) в копию не попадают: копию могут
+// Настройки ИИ агента (адрес и код доступа) и код входа в копию не попадают: копию могут
 // переслать, а код доступа — секрет. При восстановлении остаются текущие.
-const LOCAL_ONLY_META = new Set([META_AI_URL, META_AI_CODE]);
+const LOCAL_ONLY_META = new Set([META_AI_URL, META_AI_CODE, META_PIN]);
 
 export const BACKUP_FORMAT = 'jarvis-mobile-backup';
 export const BACKUP_FORMAT_VERSION = 1;

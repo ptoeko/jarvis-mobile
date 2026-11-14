@@ -15,6 +15,23 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright, expect
 
+TEST_PIN = '2580'
+
+
+def unlock(page, pin=TEST_PIN):
+    """Код входа: при первом запуске — создать, потом — ввести."""
+    if not page.locator('#lock').is_visible():
+        return
+    def press():
+        for d in pin:
+            page.click(f'#lock-keys button[data-key="{d}"]')
+    if page.locator('#lock-title').inner_text() == 'Придумайте код из 4 цифр':
+        press()
+        page.wait_for_selector('#lock-title:text("Повторите код")')
+    press()
+    page.wait_for_selector('#lock', state='hidden')
+
+
 ROOT = Path(__file__).resolve().parents[2]
 SHOTS = Path(sys.argv[1]) if len(sys.argv) > 1 else None
 
@@ -124,20 +141,32 @@ def history_survives_reload(page, url, ctx):
     expect(page.locator('.msg')).to_have_count(2)
     page.reload()
     page.wait_for_selector('html[data-ready="true"]')
+    unlock(page)
     expect(page.locator('.msg')).to_have_count(2)
     expect(page.locator('.msg-user .msg-text')).to_have_text('проверка сохранения')
 
 
 @case
 def tabs_switch_screens_and_back_button_works(page, url, ctx):
-    for name, title in [('registry', 'Реестр замечаний'), ('settings', 'Настройки'), ('status', 'Статус')]:
+    # Три вкладки; «Статус» — раздел внутри «Настроек».
+    assert page.locator('.tab').count() == 3
+    for name, title in [('registry', 'Реестр замечаний'), ('settings', 'Настройки')]:
         page.click(f'.tab[data-target="{name}"]')
         expect(page.locator(f'#screen-{name}')).to_be_visible()
         expect(page.locator(f'#screen-{name} h2')).to_have_text(title)
         expect(page.locator(f'.tab[data-target="{name}"]')).to_have_attribute('aria-current', 'page')
         assert page.locator('.screen:visible').count() == 1
+    expect(page.locator('#pane-main')).to_be_visible()
+    for pane in ['data', 'status']:
+        page.click(f'.subtab[data-pane="{pane}"]')
+        expect(page.locator(f'#pane-{pane}')).to_be_visible()
+        expect(page.locator(f'.subtab[data-pane="{pane}"]')).to_have_attribute('aria-selected', 'true')
+        assert page.locator('#screen-settings .pane:visible').count() == 1
+    expect(page.locator('.tab[data-target="settings"]')).to_have_attribute('aria-current', 'page')
     page.go_back()
-    expect(page.locator('#screen-settings')).to_be_visible()
+    expect(page.locator('#pane-data')).to_be_visible()
+    page.go_back()
+    expect(page.locator('#pane-main')).to_be_visible()
 
 
 @case
@@ -154,7 +183,8 @@ def registry_is_empty_with_all_columns(page, url, ctx):
 @case
 def status_is_honest(page, url, ctx):
     page.wait_for_function("navigator.serviceWorker && navigator.serviceWorker.controller !== null || true")
-    page.click('.tab[data-target="status"]')
+    page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="status"]')
     def state(fid):
         return page.locator(f'[data-feature="{fid}"] .state')
     expect(state('dialog')).to_have_text('Демо')
@@ -173,6 +203,7 @@ def delete_history_cancel_then_confirm(page, url, ctx):
     send(page, 'удали меня')
     expect(page.locator('.msg')).to_have_count(2)  # сохранение завершено
     page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="data"]')
     expect(page.locator('#count-messages')).to_have_text('2')
     page.click('#delete-history')
     expect(page.locator('#confirm-delete')).to_be_visible()
@@ -187,6 +218,7 @@ def delete_history_cancel_then_confirm(page, url, ctx):
     expect(page.locator('#count-messages')).to_have_text('0')
     page.reload()
     page.wait_for_selector('html[data-ready="true"]')
+    unlock(page)
     page.click('.tab[data-target="dialog"]')
     expect(page.locator('.msg')).to_have_count(0)
     expect(page.locator('#messages-empty')).to_be_visible()
@@ -203,9 +235,11 @@ def opens_without_internet(page, url, ctx):
     try:
         page.reload()
         page.wait_for_selector('html[data-ready="true"]', timeout=10000)
+        unlock(page)
         expect(page.locator('#mode-line')).to_be_visible()
         expect(page.locator('.msg-user .msg-text')).to_have_text('до отключения сети')
-        page.click('.tab[data-target="status"]')
+        page.click('.tab[data-target="settings"]')
+        page.click('.subtab[data-pane="status"]')
         expect(page.locator('[data-feature="network"] .state')).to_have_text('Недоступно')
     finally:
         ctx.set_offline(False)
@@ -214,8 +248,11 @@ def opens_without_internet(page, url, ctx):
 @case
 def no_horizontal_scroll_on_small_phone(page, url, ctx):
     page.set_viewport_size({'width': 360, 'height': 740})
-    for name in ['dialog', 'registry', 'settings', 'status']:
-        page.click(f'.tab[data-target="{name}"]')
+    for name in ['dialog', 'registry', 'settings', 'data', 'status']:
+        if name in ('data', 'status'):
+            page.click(f'.subtab[data-pane="{name}"]')
+        else:
+            page.click(f'.tab[data-target="{name}"]')
         overflow = page.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth')
         assert overflow <= 0, f'{name}: горизонтальная прокрутка {overflow}px'
 
@@ -273,6 +310,7 @@ def main():
             try:
                 page.goto(url)
                 page.wait_for_selector('html[data-ready="true"]')
+                unlock(page)
                 fn(page, url, ctx)
                 real = [e for e in errors if 'ERR_INTERNET_DISCONNECTED' not in e]
                 assert not real, f'ошибки в консоли: {real}'

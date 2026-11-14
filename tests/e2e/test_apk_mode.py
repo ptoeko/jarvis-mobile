@@ -89,6 +89,24 @@ def case(fn):
 
 def ready(page):
     page.wait_for_selector('html[data-ready="true"]')
+    unlock(page)
+
+
+TEST_PIN = '2580'
+
+
+def unlock(page, pin=TEST_PIN):
+    """Код входа: при первом запуске — создать, потом — ввести."""
+    if not page.locator('#lock').is_visible():
+        return
+    def press():
+        for d in pin:
+            page.click(f'#lock-keys button[data-key="{d}"]')
+    if page.locator('#lock-title').inner_text() == 'Придумайте код из 4 цифр':
+        press()
+        page.wait_for_selector('#lock-title:text("Повторите код")')
+    press()
+    page.wait_for_selector('#lock', state='hidden')
 
 
 def add_record(page, text):
@@ -106,9 +124,11 @@ def runs_under_apk_origin_with_csp(page, ctx):
     regs = page.evaluate('navigator.serviceWorker ? navigator.serviceWorker.getRegistrations().then(r => r.length) : 0')
     assert regs == 0, 'в APK офлайн-кеш не регистрируется'
     page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="status"]')
     expect(page.locator('#app-platform')).to_have_text('Приложение Android (APK)')
     expect(page.locator('#app-version')).to_have_text(APP_VERSION)
-    page.click('.tab[data-target="status"]')
+    page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="status"]')
     expect(page.locator('[data-feature="install"] .state')).to_have_text('APK')
     expect(page.locator('[data-feature="offline"] .state')).to_have_text('Работает')
     expect(page.locator('[data-feature="persist"] .state')).to_have_text('Работает')

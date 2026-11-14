@@ -226,6 +226,7 @@ def make_data(page):
 def backup_then_restore_on_clean_phone(page, ctx):
     make_data(page)
     page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="data"]')
     expect(page.locator('#count-attachments')).to_contain_text('4')
     with page.expect_download() as dl:
         page.click('#backup-save')
@@ -266,6 +267,7 @@ def backup_then_restore_on_clean_phone(page, ctx):
 def restore_cancel_keeps_data(page, ctx):
     make_data(page)
     page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="data"]')
     with page.expect_download() as dl:
         page.click('#backup-save')
     path = OUT / 'backup-cancel.zip'
@@ -274,6 +276,7 @@ def restore_cancel_keeps_data(page, ctx):
     page.fill('#input', 'новое после копии')
     page.click('#send')
     page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="data"]')
     page.set_input_files('#restore-input', str(path))
     page.click('#confirm-restore button[value="cancel"]')
     to_dialog(page)
@@ -286,6 +289,7 @@ def bad_backup_files_are_rejected(page, ctx):
     page.fill('#input', 'моё сообщение')
     page.click('#send')
     page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="data"]')
     for name, expected in [('текст.txt', 'не является'), ('не копия.zip', 'нет manifest.json')]:
         page.set_input_files('#restore-input', fx(name))
         expect(page.locator('#notice')).to_be_visible()
@@ -305,7 +309,10 @@ def phone_screen_360px(page, ctx):
     page.click('#send')
     expect(page.locator('.msg-user .file-chip')).to_have_count(4)
     for name in ['dialog', 'registry', 'settings', 'status']:
-        page.click(f'.tab[data-target="{name}"]')
+        if name == 'status':
+            page.click('.subtab[data-pane="status"]')
+        else:
+            page.click(f'.tab[data-target="{name}"]')
         overflow = page.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth')
         assert overflow <= 0, f'{name}: горизонтальная прокрутка {overflow}px'
     to_dialog(page)
@@ -315,9 +322,11 @@ def phone_screen_360px(page, ctx):
     assert not small, f'мелкие кнопки: {small}'
     base.shot(page, 'v040-04-dialog-360px')
     page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="data"]')
     expect(page.locator('#storage-kind')).to_have_text('В браузере телефона')
     base.shot(page, 'v040-05-settings-360px')
-    page.click('.tab[data-target="status"]')
+    page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="status"]')
     for f in ['attachments', 'copy', 'backup']:
         expect(page.locator(f'[data-feature="{f}"] .state')).to_have_text('Работает')
 
@@ -342,6 +351,7 @@ def upgrade_from_031(browser, device):
         srv.root = base.ROOT
         page.reload()
         page.wait_for_selector(f'html[data-ready="true"][data-version="{base.APP_VERSION}"]', timeout=30000)
+        base.unlock(page)
         page.click('.tab[data-target="registry"]')
         expect(page.locator('.record-row')).to_have_count(1)
         expect(page.locator('.draft')).to_have_count(1)  # черновик 0.3.1 сохранился
@@ -396,6 +406,7 @@ def apk_backup_goes_through_save_dialog_in_chunks(page, ctx):
     page.click('#send')
     expect(page.locator('.msg-user .file-chip')).to_have_count(1)
     page.click('.tab[data-target="settings"]')
+    page.click('.subtab[data-pane="data"]')
     expect(page.locator('#storage-kind')).to_have_text('В памяти приложения')
     page.click('#backup-save')
     expect(page.locator('#toast')).to_contain_text('Копия сохранена')

@@ -129,108 +129,126 @@
       <!-- Настройки -->
       <section class="screen" id="screen-settings" data-screen="settings" aria-labelledby="t-settings" hidden>
         <h2 id="t-settings">Настройки</h2>
+        <div class="subtabs" role="tablist" aria-label="Разделы настроек">
+          <button type="button" class="subtab" role="tab" data-pane="main" id="subtab-main" aria-controls="pane-main">Основные</button>
+          <button type="button" class="subtab" role="tab" data-pane="data" id="subtab-data" aria-controls="pane-data">Данные</button>
+          <button type="button" class="subtab" role="tab" data-pane="status" id="subtab-status" aria-controls="pane-status">Статус</button>
+        </div>
 
-        <div class="group" id="ai-group">
-          <h3>ИИ агент</h3>
-          <p class="value" id="ai-state">Не подключён</p>
-          <p class="note" id="ai-note">Подключение — через ваш посредник. Введите его адрес и код доступа из инструкции. Ключей ИИ в приложении нет.</p>
-          <form id="ai-form" class="fields" novalidate autocomplete="off">
-            <div class="field">
-              <label for="ai-url">Адрес посредника</label>
-              <input id="ai-url" type="url" inputmode="url" placeholder="jarvis-agent.….workers.dev" autocapitalize="off" spellcheck="false">
+        <div class="pane" id="pane-main" data-pane="main" role="tabpanel" aria-labelledby="subtab-main">
+          <div class="group" id="ai-group">
+            <h3>ИИ агент</h3>
+            <p class="value" id="ai-state">Не подключён</p>
+            <p class="note" id="ai-note">Подключение — через ваш посредник. Введите его адрес и код доступа из инструкции. Ключей ИИ в приложении нет.</p>
+            <form id="ai-form" class="fields" novalidate autocomplete="off">
+              <div class="field">
+                <label for="ai-url">Адрес посредника</label>
+                <input id="ai-url" type="url" inputmode="url" placeholder="jarvis-agent.….workers.dev" autocapitalize="off" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="ai-code">Код доступа</label>
+                <input id="ai-code" type="password" placeholder="Код из инструкции" autocapitalize="off" spellcheck="false">
+              </div>
+              <p class="form-error" id="ai-error" role="alert" hidden></p>
+              <div class="row-actions">
+                <button type="submit" class="send" id="ai-connect">Подключить</button>
+                <button type="button" class="secondary" id="ai-disconnect" hidden>Отключить</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="group" id="voice-group">
+            <h3>Голос JARVIS</h3>
+            <p class="value" id="voice-state">—</p>
+            <p class="note" id="voice-note"></p>
+            <div class="fields">
+              <div class="field">
+                <label for="voice-select">Голос</label>
+                <select id="voice-select"></select>
+              </div>
+              <div class="field">
+                <label for="voice-rate">Скорость речи</label>
+                <select id="voice-rate"></select>
+              </div>
             </div>
-            <div class="field">
-              <label for="ai-code">Код доступа</label>
-              <input id="ai-code" type="password" placeholder="Код из инструкции" autocapitalize="off" spellcheck="false">
-            </div>
-            <p class="form-error" id="ai-error" role="alert" hidden></p>
+            <label class="check"><input type="checkbox" id="voice-auto"> Читать ответы вслух автоматически</label>
+            <label class="check"><input type="checkbox" id="voice-sir"> Обращаться ко мне «сэр»</label>
+            <label class="check"><input type="checkbox" id="voice-accents"> Точные ударения через ИИ агента (нужен интернет)</label>
             <div class="row-actions">
-              <button type="submit" class="send" id="ai-connect">Подключить</button>
-              <button type="button" class="secondary" id="ai-disconnect" hidden>Отключить</button>
+              <button type="button" class="secondary" id="voice-test">Прослушать</button>
             </div>
-          </form>
-        </div>
 
-        <div class="group" id="voice-group">
-          <h3>Голос JARVIS</h3>
-          <p class="value" id="voice-state">—</p>
-          <p class="note" id="voice-note"></p>
-          <div class="fields">
-            <div class="field">
-              <label for="voice-select">Голос</label>
-              <select id="voice-select"></select>
-            </div>
-            <div class="field">
-              <label for="voice-rate">Скорость речи</label>
-              <select id="voice-rate"></select>
-            </div>
-          </div>
-          <label class="check"><input type="checkbox" id="voice-auto"> Читать ответы вслух автоматически</label>
-          <label class="check"><input type="checkbox" id="voice-sir"> Обращаться ко мне «сэр»</label>
-          <label class="check"><input type="checkbox" id="voice-accents"> Точные ударения через ИИ агента (нужен интернет)</label>
-          <div class="row-actions">
-            <button type="button" class="secondary" id="voice-test">Прослушать</button>
+            <h4 class="pron-title">Произношение</h4>
+            <p class="note">Если голос читает слово неправильно, добавьте его сюда. Ударение — знак + после ударной гласной: Айра+т, ве+домостей. Встроенный словарь уже знает JARVIS, AYRAT, СМР, ПНР, АЭС, ППР, ведомость, оси, поиск, договор, м³ и другие.</p>
+            <ul class="pron-list" id="pron-list"></ul>
+            <p class="note" id="pron-empty">Своих слов пока нет.</p>
+            <form id="pron-form" class="fields" novalidate autocomplete="off">
+              <div class="field">
+                <label for="pron-word">Слово, как написано</label>
+                <input id="pron-word" type="text" placeholder="например, ростверк" autocapitalize="off" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="pron-reading">Как читать</label>
+                <input id="pron-reading" type="text" placeholder="например, ростве+рк" autocapitalize="off" spellcheck="false">
+              </div>
+              <div class="row-actions">
+                <button type="submit" class="secondary" id="pron-add">Добавить в словарь</button>
+              </div>
+            </form>
           </div>
 
-          <h4 class="pron-title">Произношение</h4>
-          <p class="note">Если голос читает слово неправильно, добавьте его сюда. Ударение — знак + после ударной гласной: Айра+т, ве+домостей. Встроенный словарь уже знает JARVIS, AYRAT, СМР, ПНР, АЭС, ППР, ведомость, оси, поиск, договор, м³ и другие.</p>
-          <ul class="pron-list" id="pron-list"></ul>
-          <p class="note" id="pron-empty">Своих слов пока нет.</p>
-          <form id="pron-form" class="fields" novalidate autocomplete="off">
-            <div class="field">
-              <label for="pron-word">Слово, как написано</label>
-              <input id="pron-word" type="text" placeholder="например, ростверк" autocapitalize="off" spellcheck="false">
-            </div>
-            <div class="field">
-              <label for="pron-reading">Как читать</label>
-              <input id="pron-reading" type="text" placeholder="например, ростве+рк" autocapitalize="off" spellcheck="false">
-            </div>
+          <div class="group" id="pin-group">
+            <h3>Код входа</h3>
+            <p class="note">Четыре цифры при запуске JARVIS и после 5 минут в фоне. Код хранится только на этом телефоне и в резервную копию не попадает.</p>
             <div class="row-actions">
-              <button type="submit" class="secondary" id="pron-add">Добавить в словарь</button>
+              <button type="button" class="secondary" id="pin-change">Сменить код</button>
             </div>
-          </form>
-        </div>
-
-        <div class="group">
-          <h3>Данные на этом телефоне</h3>
-          <dl class="facts">
-            <div><dt>Сообщений</dt><dd id="count-messages">0</dd></div>
-            <div><dt>Записей реестра</dt><dd id="count-records">0</dd></div>
-            <div><dt>Вложений</dt><dd id="count-attachments">0</dd></div>
-            <div><dt>Где хранятся</dt><dd id="storage-kind">—</dd></div>
-          </dl>
-          <p class="note" id="storage-note">Данные никуда не отправляются. Они хранятся только на этом телефоне.</p>
-          <button type="button" class="danger" id="delete-history">Удалить всю историю</button>
-        </div>
-
-        <div class="group">
-          <h3>Резервная копия</h3>
-          <p class="note">Один файл со всеми сообщениями, записями реестра, черновиками и вложениями. Храните его вне телефона (компьютер, флешка, облако): при потере телефона или удалении приложения данные восстанавливаются только из копии.</p>
-          <dl class="facts">
-            <div><dt>Последняя копия</dt><dd id="last-backup">Не создавалась</dd></div>
-          </dl>
-          <div class="row-actions">
-            <button type="button" class="send" id="backup-save">Сохранить копию</button>
-            <button type="button" class="secondary" id="backup-restore">Восстановить из копии</button>
           </div>
-          <input type="file" id="restore-input" accept=".zip,application/zip" hidden>
         </div>
 
-        <div class="group">
-          <h3>О приложении</h3>
-          <dl class="facts">
-            <div><dt>Версия</dt><dd id="app-version">—</dd></div>
-            <div><dt>Вариант</dt><dd id="app-platform">—</dd></div>
-            <div><dt>Этап разработки</dt><dd id="app-stage">—</dd></div>
-          </dl>
-        </div>
-      </section>
+        <div class="pane" id="pane-data" data-pane="data" role="tabpanel" aria-labelledby="subtab-data" hidden>
+          <div class="group">
+            <h3>Данные на этом телефоне</h3>
+            <dl class="facts">
+              <div><dt>Сообщений</dt><dd id="count-messages">0</dd></div>
+              <div><dt>Записей реестра</dt><dd id="count-records">0</dd></div>
+              <div><dt>Вложений</dt><dd id="count-attachments">0</dd></div>
+              <div><dt>Где хранятся</dt><dd id="storage-kind">—</dd></div>
+            </dl>
+            <p class="note" id="storage-note">Данные никуда не отправляются. Они хранятся только на этом телефоне.</p>
+            <button type="button" class="danger" id="delete-history">Удалить всю историю</button>
+          </div>
 
-      <!-- Статус -->
-      <section class="screen" id="screen-status" data-screen="status" aria-labelledby="t-status" hidden>
-        <h2 id="t-status">Статус</h2>
-        <p class="note">Что работает на этом телефоне прямо сейчас.</p>
+          <div class="group">
+            <h3>Резервная копия</h3>
+            <p class="note">Один файл со всеми сообщениями, записями реестра, черновиками и вложениями. Храните его вне телефона (компьютер, флешка, облако): при потере телефона или удалении приложения данные восстанавливаются только из копии.</p>
+            <dl class="facts">
+              <div><dt>Последняя копия</dt><dd id="last-backup">Не создавалась</dd></div>
+            </dl>
+            <div class="row-actions">
+              <button type="button" class="send" id="backup-save">Сохранить копию</button>
+              <button type="button" class="secondary" id="backup-restore">Восстановить из копии</button>
+            </div>
+            <input type="file" id="restore-input" accept=".zip,application/zip" hidden>
+          </div>
+
+        </div>
+
+        <div class="pane" id="pane-status" data-pane="status" role="tabpanel" aria-labelledby="subtab-status" hidden>
+          <div class="group">
+            <h3>Что работает</h3>
+            <p class="note">Что работает на этом телефоне прямо сейчас.</p>
         <ul class="features" id="features"></ul>
+          </div>
+          <div class="group">
+            <h3>О приложении</h3>
+            <dl class="facts">
+              <div><dt>Версия</dt><dd id="app-version">—</dd></div>
+              <div><dt>Вариант</dt><dd id="app-platform">—</dd></div>
+              <div><dt>Этап разработки</dt><dd id="app-stage">—</dd></div>
+            </dl>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -247,12 +265,38 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10 M18 7h2 M4 17h4 M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
         <span>Настройки</span>
       </button>
-      <button type="button" class="tab" data-target="status">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg>
-        <span>Статус</span>
-      </button>
     </nav>
   </div>
+
+  <!-- Код входа: закрывает приложение, пока не введён код. -->
+  <div class="lock" id="lock" role="dialog" aria-modal="true" aria-labelledby="lock-title" hidden>
+    <div class="lock-box">
+      <svg class="lock-core" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" class="core-track"/><circle cx="24" cy="24" r="20" class="core-arc"/><circle cx="24" cy="24" r="7" class="core-dot"/></svg>
+      <p class="lock-brand">JARVIS</p>
+      <h2 class="lock-title" id="lock-title">Введите код</h2>
+      <div class="lock-dots" id="lock-dots" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+      <p class="lock-message" id="lock-message" role="alert"></p>
+      <div class="lock-keys" id="lock-keys">
+        <button type="button" class="lock-key" data-key="1">1</button><button type="button" class="lock-key" data-key="2">2</button><button type="button" class="lock-key" data-key="3">3</button><button type="button" class="lock-key" data-key="4">4</button><button type="button" class="lock-key" data-key="5">5</button><button type="button" class="lock-key" data-key="6">6</button><button type="button" class="lock-key" data-key="7">7</button><button type="button" class="lock-key" data-key="8">8</button><button type="button" class="lock-key" data-key="9">9</button>
+        <button type="button" class="lock-key lock-key-text" id="lock-cancel" hidden>Отмена</button>
+        <span class="lock-key-gap" id="lock-gap"></span>
+        <button type="button" class="lock-key" data-key="0">0</button>
+        <button type="button" class="lock-key lock-key-text" data-key="back" aria-label="Стереть цифру">⌫</button>
+      </div>
+      <button type="button" class="lock-forgot" id="lock-forgot" hidden>Забыли код?</button>
+    </div>
+  </div>
+
+  <dialog class="confirm" id="confirm-pin-reset" aria-labelledby="confirm-pin-reset-title">
+    <form method="dialog">
+      <h2 id="confirm-pin-reset-title">Сбросить код?</h2>
+      <p>Код нельзя восстановить. Сбросить его можно только вместе со всеми данными JARVIS на этом телефоне: перепиской, реестром, черновиками, файлами и подключением ИИ агента. Если у вас есть резервная копия, после сброса её можно восстановить: Настройки → Данные → «Восстановить из копии».</p>
+      <div class="confirm-actions">
+        <button type="submit" value="cancel" class="secondary" autofocus>Отмена</button>
+        <button type="submit" value="reset" class="danger">Удалить данные и сбросить код</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog class="confirm" id="confirm-delete" aria-labelledby="confirm-title">
     <form method="dialog">
