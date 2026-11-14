@@ -254,7 +254,7 @@ test('изображение: недоступно на бесплатном к�
 });
 
 test('фильтр названий не портит ссылки', () => {
-  assert.equal(scrubVendor('Модель Gemini, см. https://example.com/gemini-3-release и https://cloud.google.com/x'), 'Модель ИИ агент JARVIS, см. https://example.com/gemini-3-release и https://cloud.google.com/x');
+  assert.equal(scrubVendor('Модель Gemini, см. https://example.com/gemini-3-release и https://cloud.google.com/x'), 'Модель JARVIS, см. https://example.com/gemini-3-release и https://cloud.google.com/x');
 });
 
 test('документы Word и Excel передаются агенту текстом между метками', async () => {

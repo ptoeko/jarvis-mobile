@@ -10,6 +10,10 @@ import android.content.pm.ApplicationInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.speech.RecognizerIntent;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
+import android.speech.tts.Voice;
 import android.util.Base64;
 import android.util.Log;
 import android.webkit.ConsoleMessage;
@@ -23,6 +27,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
@@ -59,6 +64,8 @@ public class MainActivity extends Activity {
     static final String START_URL = "https://" + HOST + "/index.html";
     private static final int REQUEST_SAVE_FILE = 1001;
     private static final int REQUEST_CHOOSE_FILE = 1002;
+    private static final int REQUEST_DICTATION = 1003;
+    private static final Locale RUSSIAN = new Locale("ru", "RU");
     private static final Pattern TOKEN = Pattern.compile("[A-Za-z0-9-]{1,80}");
     private static final String STATE_PENDING_SAVE = "jarvis.pendingSave";
     private static final String PENDING_FILE = "pending-export.bin";
@@ -76,6 +83,11 @@ public class MainActivity extends Activity {
     // Снимок и видео камеры: пишутся сюда, если пользователь выбрал камеру.
     private File cameraFile;
     private File videoFile;
+
+    // Голос JARVIS: встроенный синтезатор речи телефона. Создаётся при первом
+    // обращении страницы. Состояние: loading → ready | no-russian | unavailable.
+    private TextToSpeech tts;
+    private volatile String ttsState = "none";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -154,6 +166,11 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+            tts = null;
+        }
         if (webView != null) {
             webView.removeJavascriptInterface("JarvisAndroid");
             webView.destroy();
@@ -229,6 +246,10 @@ public class MainActivity extends Activity {
             finishFileChooser(resultCode, data);
             return;
         }
+        if (requestCode == REQUEST_DICTATION) {
+            finishDictation(resultCode, data);
+            return;
+        }
         if (requestCode != REQUEST_SAVE_FILE) return;
         // callbackId == null: страница перезапускалась, пока было открыто окно
         // «Сохранить». Файл всё равно записывается, итог — системным сообщением.
@@ -279,8 +300,202 @@ public class MainActivity extends Activity {
         });
     }
 
+    // ---------- Голос: синтез речи ----------
+
+    private void callPage(String js) {
+        runOnUiThread(() -> {
+            if (webView != null) webView.evaluateJavascript(js, null);
+        });
+    }
+
+    private void speechEvent(String id, String state) {
+        callPage("window.__jarvisSpeech&&window.__jarvisSpeech(" + JSONObject.quote(id) + "," + JSONObject.quote(state) + ")");
+    }
+
+    private void ensureTts() {
+        if (tts != null) return;
+        ttsState = "loading";
+        tts = new TextToSpeech(this, status -> {
+            if (status != TextToSpeech.SUCCESS || tts == null) {
+                ttsState = "unavailable";
+                return;
+            }
+            int lang = tts.isLanguageAvailable(RUSSIAN);
+            if (lang < TextToSpeech.LANG_AVAILABLE) {
+                ttsState = "no-russian";
+                return;
+            }
+            tts.setLanguage(RUSSIAN);
+            tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                @Override public void onStart(String utteranceId) { }
+                @Override public void onDone(String utteranceId) {
+                    if (utteranceId != null && utteranceId.endsWith("#last")) speechEvent(utteranceId.substring(0, utteranceId.length() - 5), "done");
+                }
+                @Override public void onError(String utteranceId) {
+                    if (utteranceId != null) speechEvent(utteranceId.replaceAll("#.*$", ""), "error");
+                }
+                @Override public void onStop(String utteranceId, boolean interrupted) {
+                    if (utteranceId != null && utteranceId.endsWith("#last")) speechEvent(utteranceId.substring(0, utteranceId.length() - 5), "stopped");
+                }
+            });
+            ttsState = "ready";
+        });
+    }
+
+    private List<Voice> russianVoices() {
+        List<Voice> out = new ArrayList<>();
+        if (tts == null || !"ready".equals(ttsState)) return out;
+        try {
+            for (Voice v : tts.getVoices()) {
+                if (v.getLocale() == null || !"ru".equals(v.getLocale().getLanguage())) continue;
+                if (v.getFeatures() != null && v.getFeatures().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) continue;
+                out.add(v);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "voices", e);
+        }
+        // Сначала голоса, работающие без интернета; порядок постоянный.
+        out.sort((a, b) -> {
+            int net = Boolean.compare(a.isNetworkConnectionRequired(), b.isNetworkConnectionRequired());
+            return net != 0 ? net : a.getName().compareTo(b.getName());
+        });
+        return out;
+    }
+
+    private void startSpeaking(String chunksJson, String voiceId, double rate, double pitch, String id) {
+        if (tts == null || !"ready".equals(ttsState)) {
+            speechEvent(id, "error");
+            return;
+        }
+        try {
+            JSONArray chunks = new JSONArray(chunksJson);
+            tts.stop();
+            Voice chosen = null;
+            List<Voice> voices = russianVoices();
+            for (Voice v : voices) if (v.getName().equals(voiceId)) chosen = v;
+            if (chosen == null && !voices.isEmpty()) chosen = voices.get(0);
+            if (chosen != null) tts.setVoice(chosen); else tts.setLanguage(RUSSIAN);
+            tts.setSpeechRate((float) Math.max(0.5, Math.min(2.0, rate)));
+            tts.setPitch((float) Math.max(0.5, Math.min(2.0, pitch)));
+            int n = chunks.length();
+            if (n == 0) {
+                speechEvent(id, "done");
+                return;
+            }
+            for (int i = 0; i < n; i++) {
+                String uid = id + (i == n - 1 ? "#last" : "#" + i);
+                tts.speak(chunks.getString(i), TextToSpeech.QUEUE_ADD, null, uid);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "speak failed", e);
+            speechEvent(id, "error");
+        }
+    }
+
+    // ---------- Голос: диктовка ----------
+
+    private boolean dictationAvailable() {
+        try {
+            return !getPackageManager().queryIntentActivities(new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0).isEmpty();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void dictationResult(String status, String text) {
+        callPage("window.__jarvisDictation&&window.__jarvisDictation(" + JSONObject.quote(status) + "," + JSONObject.quote(text) + ")");
+    }
+
+    private void startDictation() {
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU");
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "ru-RU");
+        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Говорите — JARVIS запишет");
+        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        try {
+            startActivityForResult(intent, REQUEST_DICTATION);
+        } catch (ActivityNotFoundException e) {
+            dictationResult("error", "На телефоне нет распознавания речи. Установите приложение Google или включите голосовой ввод.");
+        }
+    }
+
+    private void finishDictation(int resultCode, Intent data) {
+        if (resultCode == RESULT_OK && data != null) {
+            ArrayList<String> results = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+            String text = results != null && !results.isEmpty() ? results.get(0) : "";
+            dictationResult("ok", text == null ? "" : text);
+            return;
+        }
+        if (resultCode == RESULT_CANCELED) {
+            dictationResult("cancelled", "");
+            return;
+        }
+        String message;
+        switch (resultCode) {
+            case RecognizerIntent.RESULT_NETWORK_ERROR:
+                message = "Нет связи для распознавания речи. Без интернета диктовка работает, если в настройках голосового ввода Google скачан русский язык.";
+                break;
+            case RecognizerIntent.RESULT_NO_MATCH:
+                message = "Речь не распознана. Повторите ближе к телефону.";
+                break;
+            case RecognizerIntent.RESULT_AUDIO_ERROR:
+                message = "Ошибка микрофона. Проверьте разрешение на микрофон для приложения Google.";
+                break;
+            default:
+                message = "Не удалось распознать речь. Повторите.";
+        }
+        dictationResult("error", message);
+    }
+
     /** Методы, доступные странице как window.JarvisAndroid. */
     private final class Bridge {
+        /** Состояние синтезатора речи: loading | ready | no-russian | unavailable. */
+        @JavascriptInterface
+        public String ttsStatus() {
+            if (tts == null) runOnUiThread(MainActivity.this::ensureTts);
+            String s = ttsState;
+            return "none".equals(s) ? "loading" : s;
+        }
+
+        /** Русские голоса телефона: [{ id, local }]. */
+        @JavascriptInterface
+        public String ttsVoices() {
+            JSONArray out = new JSONArray();
+            for (Voice v : russianVoices()) {
+                try {
+                    out.put(new JSONObject().put("id", v.getName()).put("local", !v.isNetworkConnectionRequired()));
+                } catch (Exception ignored) { }
+            }
+            return out.toString();
+        }
+
+        @JavascriptInterface
+        public void speak(String chunksJson, String voiceId, double rate, double pitch, String id) {
+            if (chunksJson == null || id == null) return;
+            runOnUiThread(() -> {
+                ensureTts();
+                startSpeaking(chunksJson, voiceId == null ? "" : voiceId, rate, pitch, id);
+            });
+        }
+
+        @JavascriptInterface
+        public void stopSpeaking() {
+            runOnUiThread(() -> {
+                if (tts != null) tts.stop();
+            });
+        }
+
+        @JavascriptInterface
+        public boolean canDictate() {
+            return dictationAvailable();
+        }
+
+        @JavascriptInterface
+        public void startDictation() {
+            runOnUiThread(MainActivity.this::startDictation);
+        }
+
         @JavascriptInterface
         public String getVersion() {
             try {

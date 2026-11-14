@@ -203,6 +203,24 @@ def full():
     page.wait("document.querySelector('#app-platform').textContent === 'Приложение Android (APK)'", 10, 'вариант APK')
     log('Запуск: OK, вариант APK')
 
+    # Голос JARVIS: мост Android отвечает, синтезатор запускается, озвучка не
+    # роняет приложение. Русского голоса на эмуляторе может не быть — тогда
+    # приложение показывает понятную подсказку.
+    page.wait("['ready', 'no-russian', 'unavailable'].includes(window.JarvisAndroid.ttsStatus())", 30, 'синтезатор речи')
+    tts = page.js("window.JarvisAndroid.ttsStatus()")
+    voices = page.js("JSON.parse(window.JarvisAndroid.ttsVoices()).length")
+    dictate = page.js("window.JarvisAndroid.canDictate()")
+    assert isinstance(dictate, bool), dictate
+    page.wait("document.querySelector('#voice-state').textContent !== 'Загружается…' && document.querySelector('#voice-state').textContent !== '—'", 20, 'настройки голоса')
+    shot('voice-settings')
+    if tts == 'ready':
+        page.js("""(() => { window.__voiceDone = null; window.__jarvisSpeech = (id, s) => { window.__voiceDone = s; };
+            window.JarvisAndroid.speak(JSON.stringify(['Проверка голоса JARVIS.']), '', 0.95, 0.82, 'device-test'); })()""")
+        page.wait("window.__voiceDone !== null", 30, 'озвучка')
+        assert page.js("window.__voiceDone") in ('done', 'error'), page.js("window.__voiceDone")
+    assert adb('shell', 'pidof', PKG, check=False).strip(), 'приложение закрылось'
+    log(f'Голос: синтезатор {tts}, русских голосов {voices}, диктовка {"есть" if dictate else "нет на эмуляторе"}')
+
     # Заметка → два черновика.
     page.js("location.hash = 'dialog'")
     page.js(f"""(() => {{ const i = document.querySelector('#input'); i.value = {json.dumps(N1 + chr(10) + chr(10) + N2)};

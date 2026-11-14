@@ -15,6 +15,14 @@
         <intent>
             <action android:name="android.media.action.VIDEO_CAPTURE" />
         </intent>
+        <!-- Диктовка: системное окно распознавания речи (разрешение на микрофон
+             нужно только ему, не JARVIS). Озвучка: синтезатор речи телефона. -->
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 
     <!-- allowBackup=false: рабочие заметки не копируются в облачную резервную

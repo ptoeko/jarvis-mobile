@@ -7,6 +7,8 @@ import { createStore, createMemoryAdapter, RecordError } from './core/store.js';
 import { createIdbAdapter } from './core/idb.js';
 import { documentText, canRead } from './core/docread.js';
 import { buildDocx, DOCX_MIME } from './core/docx.js';
+import { buildWorkbook } from './core/workbook.js';
+import { createSpeech, normalizePrefs, META_VOICE, RATES } from './core/speech.js';
 import { createAiClient, AiError, normalizeAgentUrl, validAccessCode, blobToBase64, META_AI_URL, META_AI_CODE, AI_LABEL } from './core/ai.js';
 import { computeFeatures, statusSummary, STATE_LABELS } from './core/status.js';
 import { parseMessage } from './core/parse.js';
@@ -37,6 +39,8 @@ const env = {
 let store;
 // ИИ агент: адрес посредника и код доступа хранятся на телефоне (Настройки).
 let ai = createAiClient();
+const speech = createSpeech(window);
+let voicePrefs = normalizePrefs(null);
 env.aiConfigured = false;
 
 async function loadAi() {
@@ -350,6 +354,143 @@ function linkify(text) {
   return nodes;
 }
 
+// ---------- Голос JARVIS ----------
+function speakerIcon() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', 'M4 9v6h4l5 4V5L8 9H4zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12');
+  svg.append(path);
+  return svg;
+}
+
+let speakingMessageId = null;
+function markSpeaking(id) {
+  speakingMessageId = id;
+  for (const b of document.querySelectorAll('.speak-btn')) {
+    const on = b.dataset.speak === id;
+    b.classList.toggle('active', on);
+    b.title = on ? 'Остановить' : 'Озвучить';
+    b.setAttribute('aria-label', on ? 'Остановить озвучку' : 'Озвучить ответ');
+  }
+}
+
+function speakText(text, id) {
+  const status = speech.status();
+  if (status === 'loading') {
+    toast('Голос JARVIS загружается. Нажмите ещё раз через пару секунд.');
+    return false;
+  }
+  if (status === 'no-russian') {
+    toast('На телефоне нет русского голоса. Настройки телефона → Синтез речи → установите русский язык.');
+    return false;
+  }
+  if (status === 'unavailable' || !speech.speak(text, voicePrefs)) {
+    toast('Озвучка недоступна на этом телефоне.');
+    return false;
+  }
+  markSpeaking(id);
+  return true;
+}
+
+function toggleSpeak(message) {
+  if (speakingMessageId === message.id && speech.speaking) {
+    speech.stop();
+    return;
+  }
+  speakText(message.text, message.id);
+}
+
+async function loadVoicePrefs() {
+  try {
+    voicePrefs = normalizePrefs(await store.getMeta(META_VOICE));
+  } catch {
+    voicePrefs = normalizePrefs(null);
+  }
+}
+
+async function saveVoicePrefs(patch) {
+  voicePrefs = normalizePrefs({ ...voicePrefs, ...patch });
+  try {
+    await store.setMeta(META_VOICE, voicePrefs);
+  } catch (e) {
+    console.error(e);
+    toast('Не удалось сохранить настройку.');
+  }
+}
+
+function voiceLabel(v, i) {
+  return `Голос ${i + 1}${v.local ? '' : ' (нужен интернет)'}`;
+}
+
+let voiceRetry = 0;
+function renderVoiceSettings() {
+  const status = speech.status();
+  const ready = status === 'ready';
+  $('voice-state').textContent = {
+    ready: 'Готов',
+    loading: 'Загружается…',
+    'no-russian': 'Нет русского голоса на телефоне',
+    unavailable: 'Недоступен на этом телефоне',
+  }[status] || 'Недоступен';
+  $('voice-note').textContent = status === 'no-russian'
+    ? 'Установите русский голос: Настройки телефона → Специальные возможности (или Общие настройки) → Синтез речи (Преобразование текста в речь) → Язык: русский.'
+    : 'Ответы читает встроенный синтезатор речи телефона — без интернета и бесплатно. Голос JARVIS — низкий тон и спокойный темп; голос и скорость можно поменять.';
+  const voices = ready ? speech.voices() : [];
+  const select = $('voice-select');
+  select.replaceChildren(...(voices.length
+    ? voices.map((v, i) => el('option', { value: v.id }, voiceLabel(v, i)))
+    : [el('option', { value: '' }, 'Голос телефона')]));
+  if (voices.some((v) => v.id === voicePrefs.voice)) select.value = voicePrefs.voice;
+  select.disabled = voices.length < 2;
+  const rate = $('voice-rate');
+  if (!rate.childElementCount) rate.append(...RATES.map((r) => el('option', { value: String(r.value) }, r.label)));
+  rate.value = String(RATES.reduce((best, r) => (Math.abs(r.value - voicePrefs.rate) < Math.abs(best.value - voicePrefs.rate) ? r : best)).value);
+  $('voice-auto').checked = voicePrefs.auto;
+  $('voice-sir').checked = voicePrefs.sir;
+  $('voice-test').disabled = !speech.canSpeak || status === 'unavailable' || status === 'no-russian';
+  // Синтезатор запускается не сразу: обновить настройки, когда он будет готов.
+  if (status === 'loading' && voiceRetry < 40) {
+    voiceRetry++;
+    setTimeout(() => { if (currentRoute() === 'settings') renderVoiceSettings(); }, 700);
+  } else if (status !== 'loading') {
+    voiceRetry = 0;
+  }
+}
+
+function testVoice() {
+  const sir = voicePrefs.sir ? ', сэр' : '';
+  speakText(`Слушаю${sir}. Я JARVIS. Готов к работе на площадке.`, 'voice-test');
+}
+
+// ---------- Диктовка ----------
+let dictating = false;
+async function handleDictation() {
+  if (dictating) return;
+  dictating = true;
+  $('mic').classList.add('active');
+  speech.stop();
+  try {
+    const text = (await speech.dictate()).trim();
+    if (text) {
+      const input = $('input');
+      const before = input.value.replace(/\s+$/, '');
+      const next = before ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+      input.value = before ? `${before}${/[.!?]$/.test(before) ? ' ' : '. '}${next}` : next;
+      autosize();
+      setComposerError('');
+      input.focus();
+    }
+  } catch (e) {
+    toast(e?.message || 'Не удалось распознать речь.');
+  } finally {
+    dictating = false;
+    $('mic').classList.remove('active');
+  }
+}
+
 // ---------- Диалог ----------
 function messageElement(message) {
   const meta = el('div', { className: 'msg-meta' });
@@ -379,6 +520,13 @@ function messageElement(message) {
     share.append(shareIcon());
     share.addEventListener('click', () => shareContent(messageShare(message)));
     meta.append(share);
+  }
+  if (message.role === 'assistant' && message.text && speech.canSpeak) {
+    const speak = el('button', { type: 'button', className: 'copy-btn speak-btn', title: 'Озвучить', dataset: { speak: message.id } });
+    speak.setAttribute('aria-label', 'Озвучить ответ');
+    speak.append(speakerIcon());
+    speak.addEventListener('click', () => toggleSpeak(message));
+    meta.append(speak);
   }
   const item = el('li', { className: `msg msg-${message.role}`, dataset: { source: message.source, id: message.id } }, meta);
   if (message.text) item.append(el('div', { className: 'msg-text' }, ...linkify(message.text)));
@@ -648,6 +796,9 @@ async function agentReplyFiles(files) {
       } catch {
         // повреждённые данные изображения пропускаются
       }
+    } else if (f?.kind === 'workbook' && Array.isArray(f.sheets)) {
+      const blob = await buildWorkbook(f);
+      out.push(new File([blob], String(f.name || 'сводный отчёт.xlsx'), { type: XLSX_MIME }));
     } else if (f?.kind === 'table' && Array.isArray(f.headers)) {
       const blob = await tableToXlsx(f.headers, Array.isArray(f.rows) ? f.rows : [], { title: f.name });
       out.push(new File([blob], String(f.name || 'таблица.xlsx'), { type: XLSX_MIME }));
@@ -671,19 +822,44 @@ function setTyping(on) {
   $('main').scrollTop = $('main').scrollHeight;
 }
 
+// Замечания, которые агент подготовил для реестра, → черновики на проверку.
+// Исходный текст черновика — слова пользователя из его сообщения (не меняется).
+async function agentDrafts(items, userMessage) {
+  if (!items.length || !userMessage) return 0;
+  const said = String(userMessage.text || '');
+  const created = items.slice(0, 20).map((item) => {
+    const own = typeof item.sourceText === 'string' ? item.sourceText.trim() : '';
+    const sourceText = own && said.toLowerCase().includes(own.toLowerCase()) ? own : said || own || 'Замечание из диалога';
+    return createDraft({
+      fields: item, sourceText, sourceMessageId: userMessage.id, attachments: userMessage.attachments, filledBy: 'ai',
+    });
+  });
+  drafts.push(...created);
+  await persistDrafts();
+  renderDrafts();
+  return created.length;
+}
+
 async function askAgent() {
   setTyping(true);
+  let message;
+  let added = 0;
   try {
-    const reply = await ai.chat(await agentHistory());
+    const reply = await ai.chat(await agentHistory(), { sir: voicePrefs.sir });
     const files = await agentReplyFiles(reply.files);
-    await store.addMessage({ role: 'assistant', source: 'ai', text: reply.text || (files.length ? 'Файл во вложении.' : '…'), files });
+    const lastUser = (await store.listMessages()).filter((m) => m.role === 'user').pop();
+    added = await agentDrafts(reply.drafts, lastUser);
+    message = await store.addMessage({ role: 'assistant', source: 'ai', text: reply.text || (files.length ? 'Файл во вложении.' : '…'), files });
   } finally {
     setTyping(false);
   }
+  if (added) toast(`На проверке в «Реестре»: ${added}. Проверьте поля и нажмите «Добавить в реестр».`);
+  if (voicePrefs.auto && message?.text && speech.canSpeak) speakText(message.text, message.id);
 }
 
 async function handleSubmit(event) {
   event.preventDefault();
+  speech.stop();
   await withComposer(async (text) => {
     try {
       await store.addMessage({ role: 'user', source: 'user', text, files: pendingFiles });
@@ -1188,6 +1364,7 @@ async function handleAiDisconnect() {
 
 async function renderSettings() {
   renderAiSettings();
+  renderVoiceSettings();
   const savedUrl = await store.getMeta(META_AI_URL);
   if (savedUrl && !$('ai-url').value) $('ai-url').value = savedUrl;
   const counts = await store.counts();
@@ -1344,6 +1521,17 @@ async function start() {
   });
 
   $('delete-history').addEventListener('click', handleDeleteHistory);
+  $('mic').hidden = !speech.canDictate;
+  $('mic').addEventListener('click', handleDictation);
+  speech.onChange((state) => {
+    if (state !== 'speaking') markSpeaking(null);
+    if (state === 'error') toast('Не удалось озвучить ответ.');
+  });
+  $('voice-select').addEventListener('change', (e) => saveVoicePrefs({ voice: e.target.value }));
+  $('voice-rate').addEventListener('change', (e) => saveVoicePrefs({ rate: Number(e.target.value) }));
+  $('voice-auto').addEventListener('change', (e) => saveVoicePrefs({ auto: e.target.checked }));
+  $('voice-sir').addEventListener('change', (e) => saveVoicePrefs({ sir: e.target.checked }));
+  $('voice-test').addEventListener('click', testVoice);
   $('dialog-menu-btn').addEventListener('click', openDialogMenu);
   $('archive-delete').addEventListener('click', deleteOpenArchive);
   $('archive-view').addEventListener('close', () => {
@@ -1378,6 +1566,8 @@ async function start() {
 
   store = await initStore();
   await loadAi();
+  await loadVoicePrefs();
+  speech.status(); // синтезатор начинает загружаться заранее
   $('ai-form').addEventListener('submit', handleAiConnect);
   $('ai-disconnect').addEventListener('click', handleAiDisconnect);
   try {
