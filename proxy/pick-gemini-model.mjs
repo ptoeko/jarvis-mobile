@@ -47,11 +47,22 @@ export function rankImageModels(models) {
   return [...new Set(usable)].sort((x, y) => score(y) - score(x));
 }
 
+async function fetchRetry(url, init, tries = 3) {
+  for (let i = 1; ; i++) {
+    try {
+      return await fetch(url, { ...init, signal: AbortSignal.timeout(30000) });
+    } catch (e) {
+      if (i >= tries) throw e;
+      await new Promise((r) => setTimeout(r, 3000 * i));
+    }
+  }
+}
+
 async function listModels(key) {
   const out = [];
   let token = '';
   for (let page = 0; page < 10; page++) {
-    const r = await fetch(`${BASE}/models?pageSize=1000${token ? `&pageToken=${token}` : ''}`, { headers: { 'x-goog-api-key': key } });
+    const r = await fetchRetry(`${BASE}/models?pageSize=1000${token ? `&pageToken=${token}` : ''}`, { headers: { 'x-goog-api-key': key } });
     if (!r.ok) throw new Error(`Список моделей недоступен: HTTP ${r.status} ${(await r.text()).slice(0, 300)}`);
     const data = await r.json();
     out.push(...(data.models || []));
@@ -61,14 +72,20 @@ async function listModels(key) {
   return out;
 }
 
+// Сбой связи или долгий ответ (перегруженная модель) — модель пропускается.
 async function tryModel(key, name) {
-  const r = await fetch(`${BASE}/models/${encodeURIComponent(name)}:generateContent`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Ответь одним словом: готов' }] }], generationConfig: { maxOutputTokens: 2048 } }),
-  });
-  const text = await r.text();
-  return { ok: r.ok, status: r.status, detail: text.slice(0, 200) };
+  try {
+    const r = await fetch(`${BASE}/models/${encodeURIComponent(name)}:generateContent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Ответь одним словом: готов' }] }], generationConfig: { maxOutputTokens: 2048 } }),
+      signal: AbortSignal.timeout(45000),
+    });
+    const text = await r.text();
+    return { ok: r.ok, status: r.status, detail: text.slice(0, 200) };
+  } catch (e) {
+    return { ok: false, status: 0, detail: `нет ответа (${e?.name || 'ошибка связи'})` };
+  }
 }
 
 async function main() {
